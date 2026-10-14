@@ -1,0 +1,19 @@
+name: escritorio_abanico
+description: Escritorio en abanico para Android.
+publish_to: none
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  shared_preferences: ^2.3.2
+  http: ^1.2.2
+  photo_manager: ^3.6.0
+  open_filex: ^4.5.0
+  path_provider: ^2.1.4
+
+flutter:
+  uses-material-design: true
