@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'native.dart';
+import 'editor.dart';
 import 'pages.dart' show aiKeyDialog;
 import 'state.dart';
 import 'ui.dart';
@@ -64,14 +65,37 @@ class SettingsPage extends StatelessWidget {
               app.changed();
             },
           ),
-          const _H('Cajones'),
+          const _H('Iconos del escritorio'),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(18, 0, 18, 6),
+            child: Text('Para moverlos, añadir o quitar: botón del lápiz en el escritorio.', style: TextStyle(color: kDim, fontSize: 13)),
+          ),
           for (final d in app.drawers)
             ListTile(
               leading: DrawerTile(id: d.id, size: 40, shadow: false),
               title: Text(d.name),
+              subtitle: Text(
+                  d.type == 'app' ? 'Acceso a app' : (d.customFan ? 'Abanico elegido por ti · ${d.items.length}' : 'Abanico automático'),
+                  style: const TextStyle(color: kDim, fontSize: 12)),
               trailing: const Icon(Icons.chevron_right, color: kDim),
-              onTap: () => _editDrawer(context, d),
+              onTap: () => editDrawer(context, d),
             ),
+          ListTile(
+            leading: const Icon(Icons.add_circle_outline),
+            title: const Text('Añadir al escritorio'),
+            onTap: () => addToDesk(context),
+          ),
+          const _H('Internet'),
+          ListTile(
+            leading: const Icon(Icons.public),
+            title: const Text('Navegador'),
+            subtitle: Text(browserName(), style: const TextStyle(color: kDim)),
+            trailing: const Icon(Icons.chevron_right, color: kDim),
+            onTap: () async {
+              if (!app.appsLoaded) await app.loadApps();
+              if (context.mounted) await pickBrowser(context);
+            },
+          ),
           const _H('Archivos'),
           SwitchListTile(
             title: const Text('Doble panel con el móvil desplegado'),
@@ -116,7 +140,7 @@ class SettingsPage extends StatelessWidget {
                 builder: (ctx) => AlertDialog(
                   backgroundColor: kSheet,
                   title: const Text('¿Restablecer el aspecto?'),
-                  content: const Text('Tus enlaces, carpetas ancladas y la clave de la IA se mantienen.'),
+                  content: const Text('Los iconos del escritorio vuelven a los 6 de serie. Tus enlaces, carpetas ancladas y la clave de la IA se mantienen.'),
                   actions: [
                     TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancelar')),
                     FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Restablecer')),
@@ -131,54 +155,6 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
-  Future<void> _editDrawer(BuildContext context, DrawerCfg d) async {
-    final name = TextEditingController(text: d.name);
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: kSheet,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, set) => Padding(
-          padding: EdgeInsets.fromLTRB(18, 18, 18, 18 + MediaQuery.of(ctx).viewInsets.bottom),
-          child: SingleChildScrollView(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Tile(size: 44, colors: pal(d.color), icon: iconFor(d.icon), shadow: false),
-                const SizedBox(width: 12),
-                const Text('Editar cajón', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-              ]),
-              const SizedBox(height: 16),
-              TextField(
-                controller: name,
-                maxLength: 18,
-                decoration: const InputDecoration(labelText: 'Nombre'),
-                onChanged: (v) {
-                  d.name = v.trim().isEmpty ? defaultDrawers().firstWhere((x) => x.id == d.id).name : v.trim();
-                  app.changed();
-                },
-              ),
-              const SizedBox(height: 8),
-              IconColorPicker(
-                icon: d.icon,
-                color: d.color,
-                onIcon: (v) => set(() {
-                  d.icon = v;
-                  app.changed();
-                }),
-                onColor: (v) => set(() {
-                  d.color = v;
-                  app.changed();
-                }),
-              ),
-              const SizedBox(height: 16),
-              Align(alignment: Alignment.centerRight, child: FilledButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Listo'))),
-            ]),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _H extends StatelessWidget {

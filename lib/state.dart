@@ -18,15 +18,60 @@ class AppEntry {
   final String pkg;
 }
 
+/// Un acceso directo dentro de un abanico elegido por el usuario.
+class Acceso {
+  Acceso(this.kind, this.label, this.value, {this.icon = 'star', this.color = 3});
+  String kind; // app | link | folder | ai
+  String label;
+  String value; // paquete, dirección web, ruta o modo de IA
+  String icon;
+  int color;
+  Map<String, dynamic> toJson() => {'kind': kind, 'label': label, 'value': value, 'icon': icon, 'color': color};
+  static Acceso fromJson(Map<String, dynamic> j) => Acceso(j['kind'] as String, j['label'] as String, j['value'] as String,
+      icon: (j['icon'] ?? 'star') as String, color: ((j['color'] ?? 3) as num).toInt());
+}
+
+const builtinTypes = ['fotos', 'apps', 'docs', 'files', 'net', 'ia'];
+
+/// Un icono del escritorio: un cajón de serie, un cajón propio o un acceso a una app.
 class DrawerCfg {
-  DrawerCfg(this.id, this.name, this.color, this.icon);
+  DrawerCfg(this.id, this.name, this.color, this.icon, {String? type, this.mode = 'auto', List<Acceso>? items, this.pkg = ''})
+      : type = type ?? id,
+        items = items ?? [];
   final String id;
+  final String type; // fotos | apps | docs | files | net | ia | custom | app
   String name;
   int color;
   String icon;
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'color': color, 'icon': icon};
-  static DrawerCfg fromJson(Map<String, dynamic> j) =>
-      DrawerCfg(j['id'] as String, j['name'] as String, (j['color'] as num).toInt(), j['icon'] as String);
+  String mode; // auto | custom
+  List<Acceso> items;
+  String pkg; // solo para type == app
+
+  bool get builtin => builtinTypes.contains(type);
+  bool get customFan => type == 'custom' || mode == 'custom';
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'type': type,
+        'name': name,
+        'color': color,
+        'icon': icon,
+        'mode': mode,
+        'items': items.map((e) => e.toJson()).toList(),
+        'pkg': pkg,
+      };
+  static DrawerCfg fromJson(Map<String, dynamic> j) => DrawerCfg(
+        j['id'] as String,
+        j['name'] as String,
+        (j['color'] as num).toInt(),
+        j['icon'] as String,
+        type: (j['type'] ?? j['id']) as String,
+        mode: (j['mode'] ?? 'auto') as String,
+        items: (j['items'] is List)
+            ? (j['items'] as List).map((e) => Acceso.fromJson(Map<String, dynamic>.from(e as Map))).toList()
+            : <Acceso>[],
+        pkg: (j['pkg'] ?? '') as String,
+      );
 }
 
 class LinkItem {
@@ -106,6 +151,7 @@ class AppState extends ChangeNotifier {
   bool dual = true;
   bool listView = true;
   bool showHidden = false;
+  String browserPkg = '';
 
   // Datos del dispositivo (no se guardan).
   List<AppEntry> apps = [];
@@ -137,7 +183,41 @@ class AppState extends ChangeNotifier {
     await loadDocs();
   }
 
-  DrawerCfg drawer(String id) => drawers.firstWhere((d) => d.id == id, orElse: () => defaultDrawers().firstWhere((d) => d.id == id));
+  DrawerCfg drawer(String id) => drawers.firstWhere((d) => d.id == id,
+      orElse: () => defaultDrawers().firstWhere((d) => d.id == id, orElse: () => DrawerCfg(id, '?', 7, 'star', type: 'custom')));
+
+  // ---------- Escritorio ----------
+  void moveDrawerTo(String id, int index) {
+    final from = drawers.indexWhere((d) => d.id == id);
+    if (from < 0) return;
+    final d = drawers.removeAt(from);
+    drawers.insert(index.clamp(0, drawers.length), d);
+    changed();
+  }
+
+  List<DrawerCfg> hiddenBuiltins() =>
+      defaultDrawers().where((b) => !drawers.any((d) => d.type == b.type)).toList();
+
+  DrawerCfg addDrawer(DrawerCfg d) {
+    drawers.add(d);
+    changed();
+    return d;
+  }
+
+  String newId() => 'c${DateTime.now().microsecondsSinceEpoch}';
+
+  void removeDrawer(DrawerCfg d) {
+    drawers.remove(d);
+    changed();
+  }
+
+  void insertDrawer(int index, DrawerCfg d) {
+    drawers.insert(index.clamp(0, drawers.length), d);
+    changed();
+  }
+
+  // ---------- Navegador ----------
+  Future<void> openUrl(String url) => Native.openUrl(url, pkg: browserPkg.isEmpty ? null : browserPkg);
 
   // ---------- Persistencia ----------
   Map<String, dynamic> _toJson() => {
@@ -154,13 +234,14 @@ class AppState extends ChangeNotifier {
         'dual': dual,
         'listView': listView,
         'showHidden': showHidden,
+        'browserPkg': browserPkg,
       };
 
   void _fromJson(Map<String, dynamic> j) {
     if (j['drawers'] is List) {
-      final saved = (j['drawers'] as List).map((e) => DrawerCfg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
-      drawers = defaultDrawers().map((d) => saved.firstWhere((s) => s.id == d.id, orElse: () => d)).toList();
+      drawers = (j['drawers'] as List).map((e) => DrawerCfg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
     }
+    browserPkg = (j['browserPkg'] ?? '') as String;
     if (j['links'] is List) links = (j['links'] as List).map((e) => LinkItem.fromJson(Map<String, dynamic>.from(e as Map))).toList();
     if (j['pins'] is List) pins = (j['pins'] as List).map((e) => PinItem.fromJson(Map<String, dynamic>.from(e as Map))).toList();
     if (j['appUse'] is Map) appUse = (j['appUse'] as Map).map((k, v) => MapEntry(k as String, (v as num).toInt()));
@@ -223,7 +304,7 @@ class AppState extends ChangeNotifier {
   Future<void> openLink(LinkItem l) async {
     l.used = DateTime.now().millisecondsSinceEpoch;
     save();
-    await Native.openUrl(l.url);
+    await openUrl(l.url);
   }
 
   // ---------- Carpetas ancladas ----------

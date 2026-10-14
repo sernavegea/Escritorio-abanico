@@ -36,9 +36,21 @@ class Native {
     }
   }
 
-  static Future<bool> openUrl(String url) async {
+  static Future<List<AppEntry>> browsers() async {
     try {
-      return await ch.invokeMethod<bool>('openUrl', {'url': url}) ?? false;
+      final r = await ch.invokeMethod<List<dynamic>>('browsers') ?? const [];
+      return r.map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        return AppEntry((m['label'] ?? '') as String, (m['pkg'] ?? '') as String);
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<bool> openUrl(String url, {String? pkg}) async {
+    try {
+      return await ch.invokeMethod<bool>('openUrl', {'url': url, 'pkg': pkg ?? ''}) ?? false;
     } catch (_) {
       return false;
     }

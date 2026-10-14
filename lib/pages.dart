@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:photo_manager/photo_manager.dart';
 
+import 'editor.dart';
 import 'explorer.dart';
 import 'fan.dart';
 import 'native.dart';
@@ -18,7 +19,8 @@ import 'ui.dart';
 // ======================================================================
 
 void openDrawer(BuildContext context, String id) {
-  switch (id) {
+  final d = app.drawer(id);
+  switch (d.type) {
     case 'apps':
       showSheet(context, (_) => const AppsPage());
       break;
@@ -37,6 +39,12 @@ void openDrawer(BuildContext context, String id) {
     case 'ia':
       Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AiPage()));
       break;
+    case 'custom':
+      showSheet(context, (_) => CustomDrawerPage(id: id), height: .75);
+      break;
+    case 'app':
+      app.launchApp(d.pkg);
+      break;
   }
 }
 
@@ -49,7 +57,11 @@ Future<void> openFile(BuildContext context, String path) async {
 
 List<FanEntry> buildFanEntries(BuildContext context, String id) {
   void all() => openDrawer(context, id);
-  switch (id) {
+  final d = app.drawer(id);
+  if (d.customFan) {
+    return [for (final s in d.items) FanEntry(s.label, (sz) => shortcutTile(s, sz), () => openShortcut(context, s))];
+  }
+  switch (d.type) {
     case 'apps':
       return withMore([
         for (final a in app.recentApps())
@@ -60,8 +72,8 @@ List<FanEntry> buildFanEntries(BuildContext context, String id) {
         return [FanEntry('Permitir', (s) => Tile(size: s, colors: pal(0), icon: Icons.lock_open), all)];
       }
       final photos = app.recentPhotos;
-      final many = photos.length > fanMax;
-      final n = many ? fanMax - 1 : photos.length;
+      final many = photos.length > fanAutoMax;
+      final n = many ? fanAutoMax - 1 : photos.length;
       return [
         for (var i = 0; i < n; i++)
           FanEntry(photos[i].title ?? 'Foto', (s) => PhotoThumb(asset: photos[i], size: s),
@@ -408,7 +420,7 @@ class _LinksPageState extends State<LinksPage> {
                 final t = v.trim();
                 if (t.isEmpty) return;
                 final isUrl = !t.contains(' ') && t.contains('.');
-                Native.openUrl(isUrl ? (t.startsWith('http') ? t : 'https://$t') : 'https://www.google.com/search?q=${Uri.encodeComponent(t)}');
+                app.openUrl(isUrl ? (t.startsWith('http') ? t : 'https://$t') : 'https://www.google.com/search?q=${Uri.encodeComponent(t)}');
               },
             ),
           ),

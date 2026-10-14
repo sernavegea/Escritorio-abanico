@@ -2,6 +2,7 @@ package com.sergio.escritorio_abanico
 
 import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.Drawable
@@ -59,12 +60,40 @@ class MainActivity : FlutterActivity() {
                     } else result.success(false)
                 }
                 "openUrl" -> {
+                    val uri = Uri.parse(call.argument<String>("url") ?: "")
+                    val pkg = call.argument<String>("pkg") ?: ""
+                    var ok = false
+                    if (pkg.isNotEmpty()) {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, uri).setPackage(pkg)
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                            ok = true
+                        } catch (e: Exception) { ok = false }
+                    }
+                    if (!ok) {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, uri)
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(intent)
+                            ok = true
+                        } catch (e: Exception) { ok = false }
+                    }
+                    result.success(ok)
+                }
+                "browsers" -> worker.execute {
                     try {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(call.argument<String>("url") ?: ""))
-                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        startActivity(intent)
-                        result.success(true)
-                    } catch (e: Exception) { result.success(false) }
+                        val pm = packageManager
+                        val query = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com")).addCategory(Intent.CATEGORY_BROWSABLE)
+                        val list = pm.queryIntentActivities(query, PackageManager.MATCH_ALL)
+                            .filter { it.activityInfo.packageName != packageName }
+                            .map { mapOf("label" to it.loadLabel(pm).toString(), "pkg" to it.activityInfo.packageName) }
+                            .distinctBy { it["pkg"] }
+                            .sortedBy { (it["label"] ?: "").lowercase() }
+                        ui.post { result.success(list) }
+                    } catch (e: Exception) {
+                        ui.post { result.success(listOf<Map<String, String>>()) }
+                    }
                 }
                 "appInfo" -> {
                     try {
@@ -104,7 +133,7 @@ class MainActivity : FlutterActivity() {
 
     private fun hasAllFiles(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) Environment.isExternalStorageManager()
-        else checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        else checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
     }
 
     private fun toPng(d: Drawable, size: Int): ByteArray {

@@ -199,6 +199,7 @@ class DrawerTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final d = app.drawer(id);
+    if (d.type == 'app' && d.pkg.isNotEmpty) return AppIcon(pkg: d.pkg, size: size);
     return Tile(size: size, colors: pal(d.color), icon: iconFor(d.icon), shadow: shadow);
   }
 }
