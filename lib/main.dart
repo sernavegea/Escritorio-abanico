@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -135,13 +136,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
                     Expanded(
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('${two(now.hour)}:${two(now.minute)}',
-                            style: const TextStyle(fontSize: 40, fontWeight: FontWeight.w300, height: 1, shadows: [Shadow(blurRadius: 8, color: Colors.black54)])),
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () async {
+                            if (!await Native.openAlarms() && context.mounted) toast(context, 'No se ha encontrado la app de reloj');
+                          },
+                          child: Text('${two(now.hour)}:${two(now.minute)}',
+                              style: const TextStyle(fontSize: 40, fontWeight: FontWeight.w300, height: 1, shadows: [Shadow(blurRadius: 8, color: Colors.black54)])),
+                        ),
                         const SizedBox(height: 4),
-                        Text('${_days[now.weekday - 1]}, ${now.day} de ${_months[now.month - 1]}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 14, color: kInk, shadows: [Shadow(blurRadius: 6, color: Colors.black54)])),
+                        GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () async {
+                            if (!await Native.openCalendar() && context.mounted) toast(context, 'No se ha encontrado la app de calendario');
+                          },
+                          child: Text('${_days[now.weekday - 1]}, ${now.day} de ${_months[now.month - 1]}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 14, color: kInk, shadows: [Shadow(blurRadius: 6, color: Colors.black54)])),
+                        ),
                       ]),
                     ),
                     if (editing) ...[
@@ -171,23 +184,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ]),
                 ),
                 Expanded(
-                  child: Center(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(vertical: 24),
-                      child: _grid(context),
+                  child: LayoutBuilder(
+                    builder: (context, box) => SingleChildScrollView(
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(minHeight: box.maxHeight - 40),
+                        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                          for (final w in app.widgets) _WidgetBox(key: ValueKey('w${w.id}'), cfg: w, editing: editing),
+                          if (app.widgets.isNotEmpty) const SizedBox(height: 12),
+                          _grid(context),
+                        ]),
+                      ),
                     ),
                   ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 14, left: 16, right: 16),
-                  child: Text(
-                    editing
-                        ? 'Arrastra para mover · Toca para editar · × para quitar'
-                        : 'Mantén pulsado para desplegar · Gira el abanico · Toca para abrir',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 12, color: kDim, shadows: [Shadow(blurRadius: 6, color: Colors.black)]),
+                if (editing)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 14, left: 16, right: 16),
+                    child: Text(
+                      'Arrastra para mover · Toca para editar · × para quitar',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: kDim, shadows: [Shadow(blurRadius: 6, color: Colors.black)]),
+                    ),
                   ),
-                ),
               ]),
             ),
           ]),
@@ -378,6 +397,92 @@ class _EditIconState extends State<_EditIcon> with SingleTickerProviderStateMixi
           ),
         ]),
       ),
+    );
+  }
+}
+
+
+/// Un widget de Android dentro del escritorio. En modo edición se puede quitar, subir, bajar y cambiar de alto.
+class _WidgetBox extends StatelessWidget {
+  const _WidgetBox({super.key, required this.cfg, required this.editing});
+  final WidgetCfg cfg;
+  final bool editing;
+
+  static const _heights = [110.0, 160.0, 220.0, 300.0, 380.0];
+
+  @override
+  Widget build(BuildContext context) {
+    final w = min(MediaQuery.of(context).size.width - 32, 620.0);
+    final view = ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: SizedBox(
+        width: w,
+        height: cfg.height,
+        child: AndroidView(
+          key: ValueKey('av${cfg.id}-${cfg.height.round()}'),
+          viewType: 'abanico/widget',
+          creationParams: {'id': cfg.id, 'w': w.round(), 'h': cfg.height.round()},
+          creationParamsCodec: const StandardMessageCodec(),
+        ),
+      ),
+    );
+    if (!editing) {
+      return Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: view);
+    }
+    final i = app.widgets.indexOf(cfg);
+    Widget btn(IconData icon, String tip, VoidCallback? onTap, {Color color = kInk}) => IconButton(
+          tooltip: tip,
+          onPressed: onTap,
+          style: IconButton.styleFrom(backgroundColor: const Color(0xCC0C1C1E)),
+          icon: Icon(icon, color: onTap == null ? kDim : color, size: 20),
+        );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Stack(children: [
+        IgnorePointer(child: Opacity(opacity: .75, child: view)),
+        Positioned.fill(
+          child: Container(
+            decoration: BoxDecoration(borderRadius: BorderRadius.circular(18), border: Border.all(color: kGlow, width: 2)),
+          ),
+        ),
+        Positioned(
+          left: 8,
+          top: 8,
+          right: 8,
+          child: Row(children: [
+            Flexible(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(color: const Color(0xCC0C1C1E), borderRadius: BorderRadius.circular(10)),
+                child: Text(cfg.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+              ),
+            ),
+            const Spacer(),
+            btn(Icons.arrow_upward, 'Subir', i > 0 ? () => app.moveWidget(cfg, -1) : null),
+            btn(Icons.arrow_downward, 'Bajar', i < app.widgets.length - 1 ? () => app.moveWidget(cfg, 1) : null),
+            btn(Icons.height, 'Cambiar alto', () {
+              final k = _heights.indexWhere((h) => h > cfg.height + 1);
+              cfg.height = k < 0 ? _heights.first : _heights[k];
+              app.changed();
+            }),
+            btn(Icons.close, 'Quitar', () async {
+              final ok = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: kSheet,
+                  title: Text('¿Quitar «${cfg.label}»?'),
+                  content: const Text('Podrás volver a añadirlo con el botón +.'),
+                  actions: [
+                    TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancelar')),
+                    FilledButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Quitar')),
+                  ],
+                ),
+              );
+              if (ok == true) app.removeWidget(cfg);
+            }, color: kDanger),
+          ]),
+        ),
+      ]),
     );
   }
 }

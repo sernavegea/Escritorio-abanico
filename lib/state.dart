@@ -74,6 +74,18 @@ class DrawerCfg {
       );
 }
 
+/// Un widget de Android colocado en el escritorio.
+class WidgetCfg {
+  WidgetCfg(this.id, this.label, this.pkg, this.height);
+  final int id;
+  String label;
+  final String pkg;
+  double height;
+  Map<String, dynamic> toJson() => {'id': id, 'label': label, 'pkg': pkg, 'height': height};
+  static WidgetCfg fromJson(Map<String, dynamic> j) =>
+      WidgetCfg((j['id'] as num).toInt(), (j['label'] ?? '') as String, (j['pkg'] ?? '') as String, ((j['height'] ?? 180) as num).toDouble());
+}
+
 class LinkItem {
   LinkItem(this.name, this.url, {this.icon = 'globe', this.color = 3, this.used = 0});
   String name;
@@ -152,6 +164,7 @@ class AppState extends ChangeNotifier {
   bool listView = true;
   bool showHidden = false;
   String browserPkg = '';
+  List<WidgetCfg> widgets = [];
 
   // Datos del dispositivo (no se guardan).
   List<AppEntry> apps = [];
@@ -216,6 +229,27 @@ class AppState extends ChangeNotifier {
     changed();
   }
 
+  // ---------- Widgets ----------
+  void addWidget(WidgetCfg w) {
+    widgets.add(w);
+    changed();
+  }
+
+  void removeWidget(WidgetCfg w) {
+    widgets.remove(w);
+    Native.removeWidget(w.id);
+    changed();
+  }
+
+  void moveWidget(WidgetCfg w, int delta) {
+    final i = widgets.indexOf(w);
+    final j = i + delta;
+    if (i < 0 || j < 0 || j >= widgets.length) return;
+    widgets.removeAt(i);
+    widgets.insert(j, w);
+    changed();
+  }
+
   // ---------- Navegador ----------
   Future<void> openUrl(String url) => Native.openUrl(url, pkg: browserPkg.isEmpty ? null : browserPkg);
 
@@ -235,6 +269,7 @@ class AppState extends ChangeNotifier {
         'listView': listView,
         'showHidden': showHidden,
         'browserPkg': browserPkg,
+        'widgets': widgets.map((w) => w.toJson()).toList(),
       };
 
   void _fromJson(Map<String, dynamic> j) {
@@ -242,6 +277,9 @@ class AppState extends ChangeNotifier {
       drawers = (j['drawers'] as List).map((e) => DrawerCfg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
     }
     browserPkg = (j['browserPkg'] ?? '') as String;
+    if (j['widgets'] is List) {
+      widgets = (j['widgets'] as List).map((e) => WidgetCfg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+    }
     if (j['links'] is List) links = (j['links'] as List).map((e) => LinkItem.fromJson(Map<String, dynamic>.from(e as Map))).toList();
     if (j['pins'] is List) pins = (j['pins'] as List).map((e) => PinItem.fromJson(Map<String, dynamic>.from(e as Map))).toList();
     if (j['appUse'] is Map) appUse = (j['appUse'] as Map).map((k, v) => MapEntry(k as String, (v as num).toInt()));

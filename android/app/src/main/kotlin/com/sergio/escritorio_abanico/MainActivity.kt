@@ -1,20 +1,33 @@
 package com.sergio.escritorio_abanico
 
 import android.Manifest
+import android.appwidget.AppWidgetHost
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.AlarmClock
 import android.provider.Settings
+import android.view.Gravity
+import android.view.View
+import android.widget.TextView
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.StandardMessageCodec
+import io.flutter.plugin.platform.PlatformView
+import io.flutter.plugin.platform.PlatformViewFactory
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
 
@@ -23,8 +36,20 @@ class MainActivity : FlutterActivity() {
     private val ui = Handler(Looper.getMainLooper())
     private var channel: MethodChannel? = null
 
+    // Widgets de Android alojados en el escritorio
+    private val hostId = 4711
+    private val reqBind = 9001
+    private val reqConfig = 9002
+    private var widgetHost: AppWidgetHost? = null
+    private var widgetManager: AppWidgetManager? = null
+    private var pendingResult: MethodChannel.Result? = null
+    private var pendingWidgetId = -1
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        widgetManager = AppWidgetManager.getInstance(this)
+        widgetHost = AppWidgetHost(applicationContext, hostId).also { h -> try { h.startListening() } catch (e: Exception) {} }
+        flutterEngine.platformViewsController.registry.registerViewFactory("abanico/widget", WidgetFactory())
         val ch = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "abanico/native")
         channel = ch
         ch.setMethodCallHandler { call, result ->
@@ -121,6 +146,70 @@ class MainActivity : FlutterActivity() {
                     }
                     result.success(true)
                 }
+                "alarms" -> result.success(openAlarms())
+                "calendar" -> {
+                    var ok = false
+                    try {
+                        startActivity(Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_CALENDAR).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        ok = true
+                    } catch (e: Exception) { ok = false }
+                    result.success(ok)
+                }
+                "widgetProviders" -> worker.execute {
+                    try {
+                        val pm = packageManager
+                        val density = resources.displayMetrics.density
+                        val list = (widgetManager?.installedProviders ?: listOf())
+                            .filter { it.provider.packageName != packageName }
+                            .map {
+                                val appLabel = try { pm.getApplicationLabel(pm.getApplicationInfo(it.provider.packageName, 0)).toString() } catch (e: Exception) { it.provider.packageName }
+                                mapOf(
+                                    "label" to it.loadLabel(pm).toString(),
+                                    "app" to appLabel,
+                                    "pkg" to it.provider.packageName,
+                                    "cls" to it.provider.className,
+                                    "minW" to (it.minWidth / density).toDouble(),
+                                    "minH" to (it.minHeight / density).toDouble()
+                                )
+                            }
+                            .sortedWith(compareBy<Map<String, Any>>({ (it["app"] as String).lowercase() }, { (it["label"] as String).lowercase() }))
+                        ui.post { result.success(list) }
+                    } catch (e: Exception) {
+                        ui.post { result.success(listOf<Map<String, Any>>()) }
+                    }
+                }
+                "addWidget" -> {
+                    val host = widgetHost
+                    val mgr = widgetManager
+                    if (host == null || mgr == null) { result.success(-1) } else {
+                        val cn = ComponentName(call.argument<String>("pkg") ?: "", call.argument<String>("cls") ?: "")
+                        val id = host.allocateAppWidgetId()
+                        val bound = try { mgr.bindAppWidgetIdIfAllowed(id, cn) } catch (e: Exception) { false }
+                        if (bound) {
+                            configureOrFinish(id, result)
+                        } else {
+                            pendingResult = result
+                            pendingWidgetId = id
+                            val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_BIND)
+                            intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                            intent.putExtra(AppWidgetManager.EXTRA_APPWIDGET_PROVIDER, cn)
+                            try { startActivityForResult(intent, reqBind) } catch (e: Exception) {
+                                host.deleteAppWidgetId(id)
+                                pendingResult = null
+                                result.success(-1)
+                            }
+                        }
+                    }
+                }
+                "removeWidget" -> {
+                    val id = call.argument<Int>("id") ?: -1
+                    try { if (id >= 0) widgetHost?.deleteAppWidgetId(id) } catch (e: Exception) {}
+                    result.success(true)
+                }
+                "widgetExists" -> {
+                    val id = call.argument<Int>("id") ?: -1
+                    result.success(id >= 0 && widgetManager?.getAppWidgetInfo(id) != null)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -129,6 +218,102 @@ class MainActivity : FlutterActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         if (intent.hasCategory(Intent.CATEGORY_HOME)) channel?.invokeMethod("home", null)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        try { widgetHost?.startListening() } catch (e: Exception) {}
+    }
+
+    override fun onStop() {
+        super.onStop()
+        try { widgetHost?.stopListening() } catch (e: Exception) {}
+    }
+
+    private fun configureOrFinish(id: Int, result: MethodChannel.Result?) {
+        val info = widgetManager?.getAppWidgetInfo(id)
+        if (info?.configure != null) {
+            pendingResult = result
+            pendingWidgetId = id
+            try {
+                widgetHost?.startAppWidgetConfigureActivityForResult(this, id, 0, reqConfig, null)
+            } catch (e: Exception) {
+                pendingResult = null
+                result?.success(id)
+            }
+        } else {
+            result?.success(id)
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != reqBind && requestCode != reqConfig) return
+        val r = pendingResult
+        val id = pendingWidgetId
+        pendingResult = null
+        if (resultCode == android.app.Activity.RESULT_OK) {
+            if (requestCode == reqBind) configureOrFinish(id, r) else r?.success(id)
+        } else {
+            try { widgetHost?.deleteAppWidgetId(id) } catch (e: Exception) {}
+            r?.success(-1)
+        }
+    }
+
+    private fun openAlarms(): Boolean {
+        try {
+            startActivity(Intent(AlarmClock.ACTION_SHOW_ALARMS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return true
+        } catch (e: Exception) {}
+        val clocks = listOf("com.hihonor.deskclock", "com.huawei.deskclock", "com.google.android.deskclock", "com.android.deskclock", "com.sec.android.app.clockpackage")
+        for (p in clocks) {
+            val i = packageManager.getLaunchIntentForPackage(p)
+            if (i != null) {
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(i)
+                return true
+            }
+        }
+        return false
+    }
+
+    inner class WidgetFactory : PlatformViewFactory(StandardMessageCodec.INSTANCE) {
+        override fun create(context: Context, viewId: Int, args: Any?): PlatformView {
+            val params = args as? Map<*, *>
+            val id = (params?.get("id") as? Number)?.toInt() ?: -1
+            val w = (params?.get("w") as? Number)?.toInt() ?: 0
+            val h = (params?.get("h") as? Number)?.toInt() ?: 0
+            return WidgetPlatformView(id, w, h)
+        }
+    }
+
+    inner class WidgetPlatformView(id: Int, w: Int, h: Int) : PlatformView {
+        private val view: View
+
+        init {
+            val info = if (id >= 0) widgetManager?.getAppWidgetInfo(id) else null
+            val host = widgetHost
+            view = if (info != null && host != null) {
+                val hv = host.createView(this@MainActivity, id, info)
+                if (w > 0 && h > 0) {
+                    try {
+                        @Suppress("DEPRECATION")
+                        hv.updateAppWidgetSize(Bundle(), w, h, w, h)
+                    } catch (e: Exception) {}
+                }
+                hv
+            } else {
+                TextView(this@MainActivity).apply {
+                    text = "Este widget ya no está disponible. Quítalo en modo edición."
+                    setTextColor(Color.WHITE)
+                    gravity = Gravity.CENTER
+                }
+            }
+        }
+
+        override fun getView(): View = view
+        override fun dispose() {}
     }
 
     private fun hasAllFiles(): Boolean {

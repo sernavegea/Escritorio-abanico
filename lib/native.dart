@@ -56,6 +56,56 @@ class Native {
     }
   }
 
+  static Future<bool> openAlarms() async {
+    try {
+      return await ch.invokeMethod<bool>('alarms') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> openCalendar() async {
+    try {
+      return await ch.invokeMethod<bool>('calendar') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<List<WidgetProvider>> widgetProviders() async {
+    try {
+      final r = await ch.invokeMethod<List<dynamic>>('widgetProviders') ?? const [];
+      return r.map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        return WidgetProvider(
+          label: (m['label'] ?? '') as String,
+          app: (m['app'] ?? '') as String,
+          pkg: (m['pkg'] ?? '') as String,
+          cls: (m['cls'] ?? '') as String,
+          minW: ((m['minW'] ?? 0) as num).toDouble(),
+          minH: ((m['minH'] ?? 0) as num).toDouble(),
+        );
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Reserva y enlaza un widget. Devuelve su id, o -1 si se canceló.
+  static Future<int> addWidget(String pkg, String cls) async {
+    try {
+      return await ch.invokeMethod<int>('addWidget', {'pkg': pkg, 'cls': cls}) ?? -1;
+    } catch (_) {
+      return -1;
+    }
+  }
+
+  static Future<void> removeWidget(int id) async {
+    try {
+      await ch.invokeMethod('removeWidget', {'id': id});
+    } catch (_) {}
+  }
+
   static Future<void> appInfo(String pkg) async {
     try {
       await ch.invokeMethod('appInfo', {'pkg': pkg});
@@ -81,4 +131,14 @@ class Native {
       await ch.invokeMethod('requestAllFiles');
     } catch (_) {}
   }
+}
+
+class WidgetProvider {
+  const WidgetProvider({required this.label, required this.app, required this.pkg, required this.cls, required this.minW, required this.minH});
+  final String label;
+  final String app;
+  final String pkg;
+  final String cls;
+  final double minW;
+  final double minH;
 }

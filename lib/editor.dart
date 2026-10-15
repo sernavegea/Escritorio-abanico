@@ -315,6 +315,12 @@ Future<void> addToDesk(BuildContext context) async {
             subtitle: const Text('Un icono que abre la app directamente', style: TextStyle(color: kDim)),
             onTap: () => Navigator.of(ctx).pop('app'),
           ),
+          ListTile(
+            leading: Tile(size: 40, colors: pal(3), icon: Icons.widgets_outlined, shadow: false),
+            title: const Text('Widget'),
+            subtitle: const Text('Reloj, tiempo, calendario, notas… de tus apps', style: TextStyle(color: kDim)),
+            onTap: () => Navigator.of(ctx).pop('widget'),
+          ),
           if (hidden.isNotEmpty)
             const Padding(
               padding: EdgeInsets.fromLTRB(20, 14, 20, 4),
@@ -340,6 +346,8 @@ Future<void> addToDesk(BuildContext context) async {
     if (apps.isEmpty) return;
     final s = apps.first;
     app.addDrawer(DrawerCfg(app.newId(), s.label, 1, 'apps', type: 'app', pkg: s.value));
+  } else if (choice == 'widget') {
+    await pickWidget(context);
   } else if (choice.startsWith('builtin:')) {
     final t = choice.substring(8);
     app.addDrawer(defaultDrawers().firstWhere((b) => b.type == t));
@@ -583,4 +591,73 @@ String browserName() {
   if (app.browserPkg.isEmpty) return 'El de Android por defecto';
   final a = app.apps.where((x) => x.pkg == app.browserPkg);
   return a.isEmpty ? app.browserPkg : a.first.label;
+}
+
+/// Elegir un widget de Android y colocarlo en el escritorio.
+Future<void> pickWidget(BuildContext context) async {
+  final list = await Native.widgetProviders();
+  if (!context.mounted) return;
+  var q = '';
+  final pick = await showModalBottomSheet<WidgetProvider>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    backgroundColor: kSheet,
+    builder: (ctx) => FractionallySizedBox(
+      heightFactor: .9,
+      child: StatefulBuilder(builder: (ctx, set) {
+        final shown = list.where((w) => q.isEmpty || '${w.app} ${w.label}'.toLowerCase().contains(q.toLowerCase())).toList();
+        return Column(children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(18, 18, 18, 8),
+            child: Align(alignment: Alignment.centerLeft, child: Text('Añadir widget', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600))),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: TextField(
+              onChanged: (v) => set(() => q = v.trim()),
+              decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Buscar por app o widget'),
+            ),
+          ),
+          Expanded(
+            child: list.isEmpty
+                ? const Center(child: Text('No se han encontrado widgets', style: TextStyle(color: kDim)))
+                : ListView.builder(
+                    itemCount: shown.length,
+                    itemBuilder: (_, i) {
+                      final w = shown[i];
+                      final newApp = i == 0 || shown[i - 1].pkg != w.pkg;
+                      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        if (newApp)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+                            child: Row(children: [
+                              AppIcon(pkg: w.pkg, size: 26),
+                              const SizedBox(width: 10),
+                              Text(w.app, style: const TextStyle(fontWeight: FontWeight.w600)),
+                            ]),
+                          ),
+                        ListTile(
+                          contentPadding: const EdgeInsets.only(left: 52, right: 16),
+                          title: Text(w.label),
+                          subtitle: Text('${w.minW.round()} × ${w.minH.round()}', style: const TextStyle(color: kDim, fontSize: 12)),
+                          trailing: const Icon(Icons.add_circle_outline, color: kGlow),
+                          onTap: () => Navigator.of(ctx).pop(w),
+                        ),
+                      ]);
+                    },
+                  ),
+          ),
+        ]);
+      }),
+    ),
+  );
+  if (pick == null) return;
+  final id = await Native.addWidget(pick.pkg, pick.cls);
+  if (id < 0) {
+    if (context.mounted) toast(context, 'No se ha añadido el widget');
+    return;
+  }
+  final h = (pick.minH + 24).clamp(110.0, 360.0);
+  app.addWidget(WidgetCfg(id, pick.label, pick.pkg, h));
 }
