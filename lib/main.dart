@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'desk.dart';
 import 'editor.dart';
 import 'fan.dart';
+import 'headmouse.dart';
 import 'native.dart';
 import 'pages.dart';
 import 'settings.dart';
@@ -36,6 +37,7 @@ Future<void> main() async {
     return null;
   });
   await app.init();
+  await head.init(navKey);
   runApp(const AbanicoApp());
 }
 
@@ -66,6 +68,7 @@ class AbanicoApp extends StatelessWidget {
           isDense: true,
         ),
       ),
+      builder: (context, child) => HeadLayer(child: child ?? const SizedBox.shrink()),
       home: const HomeScreen(),
     );
   }

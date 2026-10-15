@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'native.dart';
 import 'editor.dart';
+import 'headmouse.dart';
 import 'pages.dart' show aiKeyDialog;
 import 'state.dart';
 import 'ui.dart';
@@ -159,6 +160,25 @@ class SettingsPage extends StatelessWidget {
             onTap: Native.requestNotifAccess,
           ),
           const _NotifStatus(),
+          ],
+          if (isAndroid) ...[
+          const _H('Control con la cabeza'),
+          ListenableBuilder(
+            listenable: head,
+            builder: (context, _) => SwitchListTile(
+              secondary: const Icon(Icons.face_retouching_natural),
+              title: const Text('Mover el cursor con la cabeza'),
+              subtitle: const Text('Usa la cámara frontal; los gestos de la cara hacen clic', style: TextStyle(color: kDim)),
+              value: head.enabled,
+              onChanged: head.setEnabled,
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.tune),
+            title: const Text('Gestos, velocidad y calibración'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const HeadSettingsPage())),
+          ),
           ],
           const _H('Inteligencia artificial'),
           ListTile(
