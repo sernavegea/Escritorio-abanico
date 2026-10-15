@@ -257,7 +257,7 @@ class _AppIconState extends State<AppIcon> {
 
 class PhotoThumb extends StatefulWidget {
   const PhotoThumb({super.key, required this.asset, required this.size, this.rounded = true});
-  final AssetEntity asset;
+  final PhotoItem asset;
   final double size;
   final bool rounded;
   @override
@@ -270,12 +270,14 @@ class _PhotoThumbState extends State<PhotoThumb> {
   @override
   void initState() {
     super.initState();
+    final a = widget.asset.asset;
+    if (a == null) return; // En Windows la miniatura sale directamente del archivo.
     final cache = app.thumbCache;
-    final id = widget.asset.id;
+    final id = a.id;
     if (cache.containsKey(id)) {
       bytes = cache[id];
     } else {
-      widget.asset.thumbnailDataWithSize(const ThumbnailSize(240, 240)).then((b) {
+      a.thumbnailDataWithSize(const ThumbnailSize(240, 240)).then((b) {
         cache[id] = b;
         if (mounted) setState(() => bytes = b);
       }).catchError((_) {});
@@ -286,9 +288,21 @@ class _PhotoThumbState extends State<PhotoThumb> {
   Widget build(BuildContext context) {
     final s = widget.size;
     final b = bytes;
-    final img = b == null
-        ? Container(width: s, height: s, color: kSheet2)
-        : Image.memory(b, width: s, height: s, fit: BoxFit.cover, gaplessPlayback: true);
+    final path = widget.asset.path;
+    final Widget img;
+    if (path != null) {
+      img = Image.file(File(path),
+          width: s,
+          height: s,
+          fit: BoxFit.cover,
+          cacheWidth: 260,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) => Container(width: s, height: s, color: kSheet2));
+    } else if (b == null) {
+      img = Container(width: s, height: s, color: kSheet2);
+    } else {
+      img = Image.memory(b, width: s, height: s, fit: BoxFit.cover, gaplessPlayback: true);
+    }
     if (!widget.rounded) return img;
     return ClipRRect(borderRadius: BorderRadius.circular(s * app.radius), child: img);
   }

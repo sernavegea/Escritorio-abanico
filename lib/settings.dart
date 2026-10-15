@@ -17,7 +17,7 @@ class SettingsPage extends StatelessWidget {
         backgroundColor: kExBg,
         appBar: AppBar(backgroundColor: kExBg, title: const Text('Personalizar')),
         body: ListView(padding: const EdgeInsets.only(bottom: 40), children: [
-          ListTile(
+          if (isAndroid) ListTile(
             leading: const Icon(Icons.home_outlined),
             title: const Text('Usar Abanico como pantalla de inicio'),
             subtitle: const Text('Elige «Abanico» en la app de inicio predeterminada', style: TextStyle(color: kDim)),
@@ -98,7 +98,7 @@ class SettingsPage extends StatelessWidget {
           ),
           const _H('Archivos'),
           SwitchListTile(
-            title: const Text('Doble panel con el móvil desplegado'),
+            title: Text(isWin ? 'Doble panel en el explorador' : 'Doble panel con el móvil desplegado'),
             subtitle: const Text('Dos carpetas lado a lado en pantallas anchas', style: TextStyle(color: kDim)),
             value: app.dual,
             onChanged: (v) {
@@ -114,6 +114,7 @@ class SettingsPage extends StatelessWidget {
               app.changed();
             },
           ),
+          if (isAndroid) ...[
           const _H('Notificaciones'),
           SwitchListTile(
             title: const Text('Bocadillos de notificaciones en el escritorio'),
@@ -132,6 +133,7 @@ class SettingsPage extends StatelessWidget {
             onTap: Native.requestNotifAccess,
           ),
           const _NotifStatus(),
+          ],
           const _H('Inteligencia artificial'),
           ListTile(
             leading: const Icon(Icons.key_outlined),

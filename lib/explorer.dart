@@ -31,14 +31,14 @@ class _Clip {
 
 /// Explorador de archivos estilo Windows, con doble panel en pantallas anchas.
 class ExplorerPage extends StatefulWidget {
-  const ExplorerPage({super.key, this.start = kRoot});
-  final String start;
+  const ExplorerPage({super.key, this.start});
+  final String? start;
   @override
   State<ExplorerPage> createState() => _ExplorerPageState();
 }
 
 class _ExplorerPageState extends State<ExplorerPage> with WidgetsBindingObserver {
-  late final List<_Pane> panes = [_Pane(widget.start), _Pane('$kRoot/Download')];
+  late final List<_Pane> panes = [_Pane(np(widget.start ?? kRoot)), _Pane('$kRoot/${folderName('download')}')];
   int active = 0;
   _Clip? clip;
   bool checked = false;
@@ -85,8 +85,10 @@ class _ExplorerPageState extends State<ExplorerPage> with WidgetsBindingObserver
   Future<void> _load(_Pane p) async {
     if (mounted) setState(() => p.loading = true);
     try {
-      final list = await Directory(p.path).list(followLinks: false).toList();
-      final items = list.where((e) => app.showHidden || !baseName(e.path).startsWith('.')).toList();
+      final raw = await Directory(p.path).list(followLinks: false).toList();
+      // Rutas siempre con '/', también en Windows.
+      final list = raw.map<FileSystemEntity>((e) => e is Directory ? Directory(np(e.path)) : File(np(e.path))).toList();
+      final items = list.where((e) => app.showHidden || !_hiddenName(baseName(e.path))).toList();
       final stats = <String, FileStat>{};
       for (final e in items) {
         try {
@@ -109,6 +111,20 @@ class _ExplorerPageState extends State<ExplorerPage> with WidgetsBindingObserver
     if (p.sel.isEmpty) p.selMode = false;
     p.loading = false;
     if (mounted) setState(() {});
+  }
+
+  static const _winHidden = {
+    'desktop.ini', 'thumbs.db', 'appdata', 'application data', 'cookies', 'local settings', 'nethood', 'printhood', 'recent',
+    'sendto', 'start menu', 'templates', 'my documents', 'mis documentos', 'configuración local', 'datos de programa',
+    'entorno de red', 'impresoras', 'menú inicio', 'plantillas', 'reciente', r'$recycle.bin', 'system volume information',
+    'pagefile.sys', 'hiberfil.sys', 'swapfile.sys', 'dumpstack.log.tmp', 'recovery', 'config.msi', 'documents and settings',
+  };
+
+  bool _hiddenName(String n) {
+    if (n.startsWith('.')) return true;
+    if (!isWin) return false;
+    final l = n.toLowerCase();
+    return l.startsWith('ntuser') || _winHidden.contains(l);
   }
 
   Future<void> _reloadAll() async {
@@ -142,8 +158,8 @@ class _ExplorerPageState extends State<ExplorerPage> with WidgetsBindingObserver
   }
 
   void up(_Pane p) {
-    if (p.path == kRoot || !p.path.startsWith(kRoot)) return;
-    nav(p, p.path.substring(0, p.path.lastIndexOf('/')));
+    final parent = parentOf(p.path, kRoot);
+    if (parent != null) nav(p, parent);
   }
 
   void _handleBack() {
@@ -487,7 +503,7 @@ class _ExplorerPageState extends State<ExplorerPage> with WidgetsBindingObserver
                         app.changed();
                         _reloadAll();
                       }
-                      if (v == 'pin') app.togglePin(p.path == kRoot ? 'Raíz' : baseName(p.path), p.path);
+                      if (v == 'pin') app.togglePin(p.path == kRoot ? rootLabel : (baseName(p.path).isEmpty ? p.path : baseName(p.path)), p.path);
                       if (v == 'reload') _reloadAll();
                     },
                     itemBuilder: (_) => [
@@ -624,14 +640,7 @@ class _ExplorerPageState extends State<ExplorerPage> with WidgetsBindingObserver
   }
 
   Widget _navBar(_Pane p, bool highlighted) {
-    final parts = <MapEntry<String, String>>[const MapEntry('Almacenamiento', kRoot)];
-    if (p.path.startsWith(kRoot) && p.path != kRoot) {
-      var acc = kRoot;
-      for (final s in p.path.substring(kRoot.length + 1).split('/')) {
-        acc = '$acc/$s';
-        parts.add(MapEntry(s, acc));
-      }
-    }
+    final parts = [for (final c in crumbsOf(p.path, kRoot)) MapEntry(c.$1, c.$2)];
     return Container(
       height: 50,
       decoration: BoxDecoration(
@@ -639,7 +648,7 @@ class _ExplorerPageState extends State<ExplorerPage> with WidgetsBindingObserver
       ),
       child: Row(children: [
         IconButton(icon: const Icon(Icons.arrow_back), tooltip: 'Atrás', onPressed: p.hi > 0 ? () => back(p) : null),
-        IconButton(icon: const Icon(Icons.arrow_upward), tooltip: 'Subir', onPressed: p.path != kRoot ? () => up(p) : null),
+        IconButton(icon: const Icon(Icons.arrow_upward), tooltip: 'Subir', onPressed: parentOf(p.path, kRoot) != null ? () => up(p) : null),
         Expanded(
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -697,6 +706,7 @@ class _ExplorerPageState extends State<ExplorerPage> with WidgetsBindingObserver
           child: InkWell(
             onTap: () => tapItem(p, e),
             onLongPress: () => longItem(p, e),
+                onSecondaryTap: () => longItem(p, e),
             child: Opacity(
               opacity: cut ? .45 : 1,
               child: Padding(
@@ -741,6 +751,7 @@ class _ExplorerPageState extends State<ExplorerPage> with WidgetsBindingObserver
                 borderRadius: BorderRadius.circular(12),
                 onTap: () => tapItem(p, e),
                 onLongPress: () => longItem(p, e),
+                onSecondaryTap: () => longItem(p, e),
                 child: Opacity(
                   opacity: cut ? .45 : 1,
                   child: Stack(children: [

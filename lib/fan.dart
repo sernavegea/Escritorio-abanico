@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -75,6 +77,7 @@ class FanController {
     required Offset tileCenter,
     required List<FanEntry> items,
     required VoidCallback onCore,
+    bool hover = false,
   }) {
     close();
     final size = MediaQuery.of(context).size;
@@ -92,6 +95,7 @@ class FanController {
     _entry = OverlayEntry(
       builder: (_) => _FanOverlay(
         drawerId: drawerId,
+        hover: hover,
         items: items,
         onClose: close,
         onCore: () {
@@ -106,7 +110,7 @@ class FanController {
       ),
     );
     Overlay.of(context).insert(_entry!);
-    HapticFeedback.mediumImpact();
+    if (!hover) HapticFeedback.mediumImpact();
   }
 
   /// Mientras el dedo sigue pulsado, ilumina el elemento visible más cercano.
@@ -157,8 +161,9 @@ class FanController {
 final fan = FanController();
 
 class _FanOverlay extends StatefulWidget {
-  const _FanOverlay({required this.drawerId, required this.items, required this.onClose, required this.onCore, required this.onPick});
+  const _FanOverlay({required this.drawerId, required this.hover, required this.items, required this.onClose, required this.onCore, required this.onPick});
   final String drawerId;
+  final bool hover;
   final List<FanEntry> items;
   final VoidCallback onClose;
   final VoidCallback onCore;
@@ -183,11 +188,35 @@ class _FanOverlayState extends State<_FanOverlay> with TickerProviderStateMixin 
     });
   }
 
+  Timer? _leave;
+
   @override
   void dispose() {
+    _leave?.cancel();
     intro.dispose();
     snap.dispose();
     super.dispose();
+  }
+
+  /// Con ratón: si el puntero se aleja del círculo, el abanico se cierra solo.
+  void _onHover(PointerHoverEvent e) {
+    if (!widget.hover) return;
+    final far = (e.position - fan.center).distance > fan.radius + 70;
+    if (far) {
+      _leave ??= Timer(const Duration(milliseconds: 280), widget.onClose);
+    } else {
+      _leave?.cancel();
+      _leave = null;
+    }
+  }
+
+  /// Rueda del ratón: gira el abanico de uno en uno.
+  void _onSignal(PointerSignalEvent e) {
+    if (e is! PointerScrollEvent || !fan.rotates) return;
+    final dir = e.scrollDelta.dy > 0 ? 1.0 : -1.0;
+    _from = fan.offset.value;
+    _to = (fan.offset.value.roundToDouble() + dir).clamp(0.0, fan.maxOffset);
+    snap.forward(from: 0);
   }
 
   double _angleOf(Offset p) {
@@ -228,7 +257,10 @@ class _FanOverlayState extends State<_FanOverlay> with TickerProviderStateMixin 
     final d = fan.radius * 2 + s + 40;
     return Material(
       type: MaterialType.transparency,
-      child: Stack(children: [
+      child: Listener(
+        onPointerHover: _onHover,
+        onPointerSignal: _onSignal,
+        child: Stack(children: [
         // Fondo: tocar fuera del círculo cierra.
         Positioned.fill(
           child: GestureDetector(
@@ -344,6 +376,7 @@ class _FanOverlayState extends State<_FanOverlay> with TickerProviderStateMixin 
           ),
         ),
       ]),
+      ),
     );
   }
 }

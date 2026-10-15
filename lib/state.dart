@@ -7,10 +7,30 @@ import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'desktop.dart';
 import 'native.dart';
+import 'platform.dart';
 import 'ui.dart';
 
-const kRoot = '/storage/emulated/0';
+export 'platform.dart';
+
+/// Carpeta principal: el almacenamiento en Android, la carpeta del usuario en Windows.
+final String kRoot = computeRoot();
+
+/// Una foto: de la galería de Android o un archivo de imagen en Windows.
+class PhotoItem {
+  PhotoItem.asset(AssetEntity a)
+      : asset = a,
+        path = null;
+  PhotoItem.file(String p)
+      : asset = null,
+        path = p;
+  final AssetEntity? asset;
+  final String? path;
+  String get id => asset?.id ?? path!;
+  String get title => asset?.title ?? baseName(path!);
+  Future<File?> get file async => asset != null ? await asset!.file : File(path!);
+}
 
 class AppEntry {
   const AppEntry(this.label, this.pkg);
@@ -149,13 +169,14 @@ List<LinkItem> defaultLinks() => [
     ];
 
 List<PinItem> defaultPins() => [
-      PinItem('Descargas', '$kRoot/Download', icon: 'down'),
-      PinItem('Documentos', '$kRoot/Documents', icon: 'doc'),
-      PinItem('Cámara', '$kRoot/DCIM/Camera', icon: 'cam'),
-      PinItem('Imágenes', '$kRoot/Pictures', icon: 'image'),
-      PinItem('Música', '$kRoot/Music', icon: 'music'),
-      PinItem('Vídeos', '$kRoot/Movies', icon: 'video'),
-      PinItem('Raíz', kRoot, icon: 'drive'),
+      if (isWin) PinItem('Escritorio', '$kRoot/${folderName('desktop')}', icon: 'screen'),
+      PinItem('Descargas', '$kRoot/${folderName('download')}', icon: 'down'),
+      PinItem('Documentos', '$kRoot/${folderName('documents')}', icon: 'doc'),
+      if (!isWin) PinItem('Cámara', '$kRoot/${folderName('camera')}', icon: 'cam'),
+      PinItem('Imágenes', '$kRoot/${folderName('pictures')}', icon: 'image'),
+      PinItem('Música', '$kRoot/${folderName('music')}', icon: 'music'),
+      PinItem('Vídeos', '$kRoot/${folderName('videos')}', icon: 'video'),
+      if (isWin) PinItem('Disco C:', 'C:/', icon: 'drive') else PinItem('Raíz', kRoot, icon: 'drive'),
     ];
 
 /// Modos del asistente: nombre -> (icono, color, instrucción de sistema).
@@ -195,7 +216,7 @@ class AppState extends ChangeNotifier {
   bool appsLoaded = false;
   final Map<String, Uint8List?> iconCache = {};
   final Map<String, Uint8List?> thumbCache = {};
-  List<AssetEntity> recentPhotos = [];
+  List<PhotoItem> recentPhotos = [];
   bool photosAllowed = false;
   List<File> recentDocs = [];
   Map<String, DateTime> docDates = {};
@@ -362,6 +383,10 @@ class AppState extends ChangeNotifier {
 
   // ---------- Apps ----------
   Future<void> loadApps() async {
+    Desk.onAppsUpdated = (fresh) {
+      apps = fresh;
+      notifyListeners();
+    };
     apps = await Native.apps();
     appsLoaded = true;
     notifyListeners();
@@ -426,6 +451,14 @@ class AppState extends ChangeNotifier {
 
   // ---------- Fotos ----------
   Future<bool> loadPhotos() async {
+    if (isWin) {
+      photosAllowed = true;
+      final roots = ['$kRoot/Pictures', '$kRoot/OneDrive/Pictures', '$kRoot/OneDrive/Imágenes', '$kRoot/Desktop', '$kRoot/Downloads'];
+      final files = await scanFiles(roots, imgExt, maxDepth: 4, limit: 4000);
+      recentPhotos = files.take(400).map((f) => PhotoItem.file(f.path)).toList();
+      notifyListeners();
+      return true;
+    }
     try {
       final ps = await PhotoManager.requestPermissionExtend();
       photosAllowed = ps.isAuth || ps == PermissionState.limited;
@@ -439,7 +472,7 @@ class AppState extends ChangeNotifier {
         onlyAll: true,
         filterOption: FilterOptionGroup(orders: [const OrderOption(type: OrderOptionType.createDate, asc: false)]),
       );
-      recentPhotos = paths.isEmpty ? [] : await paths.first.getAssetListPaged(page: 0, size: 400);
+      recentPhotos = paths.isEmpty ? [] : (await paths.first.getAssetListPaged(page: 0, size: 400)).map(PhotoItem.asset).toList();
     } catch (_) {
       recentPhotos = [];
     }
@@ -457,38 +490,11 @@ class AppState extends ChangeNotifier {
         recentDocs = [];
         return;
       }
-      final found = <File>[];
-      Future<void> walk(Directory d, int depth) async {
-        if (depth > 5 || found.length > 3000) return;
-        try {
-          await for (final e in d.list(followLinks: false)) {
-            final n = baseName(e.path);
-            if (n.startsWith('.')) continue;
-            if (e is Directory) {
-              if (n == 'Android') continue;
-              await walk(e, depth + 1);
-            } else if (e is File && recentDocExt.contains(extOf(n))) {
-              found.add(e);
-            }
-          }
-        } catch (_) {}
-      }
-
-      for (final sub in ['Download', 'Documents', 'Desktop']) {
-        final d = Directory('$kRoot/$sub');
-        if (await d.exists()) await walk(d, 0);
-      }
-      final dates = <String, DateTime>{};
-      for (final f in found) {
-        try {
-          dates[f.path] = (await f.stat()).modified;
-        } catch (_) {
-          dates[f.path] = DateTime(2000);
-        }
-      }
-      found.sort((a, b) => dates[b.path]!.compareTo(dates[a.path]!));
+      final roots = isWin
+          ? ['$kRoot/Downloads', '$kRoot/Documents', '$kRoot/Desktop', '$kRoot/OneDrive/Documentos', '$kRoot/OneDrive/Documents', '$kRoot/OneDrive/Escritorio', '$kRoot/OneDrive/Desktop']
+          : ['$kRoot/Download', '$kRoot/Documents', '$kRoot/Desktop'];
+      final found = await scanFiles(roots, recentDocExt, maxDepth: 5, limit: 3000, dates: docDates);
       recentDocs = found.take(300).toList();
-      docDates = dates;
     } finally {
       _loadingDocs = false;
       notifyListeners();
@@ -523,3 +529,44 @@ class AppState extends ChangeNotifier {
 }
 
 final app = AppState();
+
+
+/// Busca archivos con esas extensiones y los devuelve del más nuevo al más antiguo (rutas con '/').
+Future<List<File>> scanFiles(List<String> roots, Set<String> exts, {int maxDepth = 5, int limit = 3000, Map<String, DateTime>? dates}) async {
+  final found = <File>[];
+  const skip = {'Android', 'AppData', 'node_modules', '\$RECYCLE.BIN', 'Program Files', 'Windows'};
+  Future<void> walk(Directory d, int depth) async {
+    if (depth > maxDepth || found.length > limit) return;
+    try {
+      await for (final e in d.list(followLinks: false)) {
+        final path = np(e.path);
+        final n = baseName(path);
+        if (n.startsWith('.')) continue;
+        if (e is Directory) {
+          if (skip.contains(n)) continue;
+          await walk(Directory(path), depth + 1);
+        } else if (e is File && exts.contains(extOf(n))) {
+          found.add(File(path));
+        }
+      }
+    } catch (_) {}
+  }
+
+  final seen = <String>{};
+  for (final r in roots) {
+    final d = Directory(r);
+    if (!seen.add(r.toLowerCase())) continue;
+    if (await d.exists()) await walk(d, 0);
+  }
+  final unique = <String, File>{for (final f in found) f.path.toLowerCase(): f}.values.toList();
+  final when = dates ?? <String, DateTime>{};
+  for (final f in unique) {
+    try {
+      when[f.path] = (await f.stat()).modified;
+    } catch (_) {
+      when[f.path] = DateTime(2000);
+    }
+  }
+  unique.sort((a, b) => when[b.path]!.compareTo(when[a.path]!));
+  return unique;
+}

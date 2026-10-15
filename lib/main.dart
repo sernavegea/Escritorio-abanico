@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -196,7 +197,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       child: ConstrainedBox(
                         constraints: BoxConstraints(minHeight: box.maxHeight - 40),
                         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                          if (!editing) const NotifBubbles(),
+                          if (!editing && isAndroid) const NotifBubbles(),
                           for (final w in app.widgets) _WidgetBox(key: ValueKey('w${w.id}'), cfg: w, editing: editing),
                           if (app.widgets.isNotEmpty) const SizedBox(height: 12),
                           _grid(context),
@@ -299,6 +300,24 @@ class DeskIcon extends StatefulWidget {
 
 class _DeskIconState extends State<DeskIcon> {
   final key = GlobalKey();
+  Timer? _hover;
+
+  @override
+  void dispose() {
+    _hover?.cancel();
+    super.dispose();
+  }
+
+  void _showFan({bool hover = false}) {
+    fan.show(
+      context: context,
+      drawerId: widget.id,
+      tileCenter: _center(),
+      items: buildFanEntries(context, widget.id),
+      onCore: () => openDrawer(context, widget.id),
+      hover: hover,
+    );
+  }
 
   Offset _center() {
     final box = key.currentContext?.findRenderObject() as RenderBox?;
@@ -310,21 +329,19 @@ class _DeskIconState extends State<DeskIcon> {
   Widget build(BuildContext context) {
     final d = app.drawer(widget.id);
     final isApp = d.type == 'app';
-    return GestureDetector(
+    final gesture = GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () => openDrawer(context, widget.id),
+      onTap: () {
+        _hover?.cancel();
+        fan.close();
+        openDrawer(context, widget.id);
+      },
       onLongPressStart: (_) {
         if (isApp) {
           widget.onEditRequest();
           return;
         }
-        fan.show(
-          context: context,
-          drawerId: widget.id,
-          tileCenter: _center(),
-          items: buildFanEntries(context, widget.id),
-          onCore: () => openDrawer(context, widget.id),
-        );
+        _showFan();
       },
       onLongPressMoveUpdate: (e) {
         if (!isApp) fan.hover(e.globalPosition);
@@ -333,6 +350,19 @@ class _DeskIconState extends State<DeskIcon> {
         if (!isApp) fan.release();
       },
       child: _IconFace(id: widget.id, tileKey: key),
+    );
+    if (isApp) return gesture;
+    // Con ratón (PC): al dejar el cursor encima, se despliega el abanico.
+    return MouseRegion(
+      onEnter: (e) {
+        if (e.kind != PointerDeviceKind.mouse) return;
+        _hover?.cancel();
+        _hover = Timer(const Duration(milliseconds: 320), () {
+          if (mounted && !fan.isOpen) _showFan(hover: true);
+        });
+      },
+      onExit: (_) => _hover?.cancel(),
+      child: gesture,
     );
   }
 }

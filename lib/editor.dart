@@ -315,7 +315,7 @@ Future<void> addToDesk(BuildContext context) async {
             subtitle: const Text('Un icono que abre la app directamente', style: TextStyle(color: kDim)),
             onTap: () => Navigator.of(ctx).pop('app'),
           ),
-          ListTile(
+          if (isAndroid) ListTile(
             leading: Tile(size: 40, colors: pal(3), icon: Icons.widgets_outlined, shadow: false),
             title: const Text('Widget'),
             subtitle: const Text('Reloj, tiempo, calendario, notas… de tus apps', style: TextStyle(color: kDim)),
@@ -469,15 +469,16 @@ Future<List<Acceso>> pickLink(BuildContext context) async {
 Future<List<Acceso>> pickFolder(BuildContext context) async {
   final options = <(String, String, String)>[
     for (final p in app.pins) (p.name, p.path, p.icon),
-    ('Descargas', '$kRoot/Download', 'down'),
-    ('Documentos', '$kRoot/Documents', 'doc'),
-    ('Cámara', '$kRoot/DCIM/Camera', 'cam'),
-    ('Imágenes', '$kRoot/Pictures', 'image'),
-    ('Capturas', '$kRoot/Pictures/Screenshots', 'image'),
-    ('Música', '$kRoot/Music', 'music'),
-    ('Vídeos', '$kRoot/Movies', 'video'),
-    ('WhatsApp', '$kRoot/Android/media/com.whatsapp/WhatsApp/Media', 'chat'),
-    ('Raíz', kRoot, 'drive'),
+    if (isWin) ('Escritorio', '$kRoot/${folderName('desktop')}', 'screen'),
+    ('Descargas', '$kRoot/${folderName('download')}', 'down'),
+    ('Documentos', '$kRoot/${folderName('documents')}', 'doc'),
+    if (!isWin) ('Cámara', '$kRoot/${folderName('camera')}', 'cam'),
+    ('Imágenes', '$kRoot/${folderName('pictures')}', 'image'),
+    ('Capturas', '$kRoot/${folderName('screenshots')}', 'image'),
+    ('Música', '$kRoot/${folderName('music')}', 'music'),
+    ('Vídeos', '$kRoot/${folderName('videos')}', 'video'),
+    if (!isWin) ('WhatsApp', '$kRoot/Android/media/com.whatsapp/WhatsApp/Media', 'chat'),
+    if (isWin) ('Disco C:', 'C:/', 'drive') else ('Raíz', kRoot, 'drive'),
   ];
   final seen = <String>{};
   final unique = options.where((o) => seen.add(o.$2)).toList();
@@ -503,7 +504,7 @@ Future<List<Acceso>> pickFolder(BuildContext context) async {
               ListTile(
                 leading: Tile(size: 38, colors: _folderColors, icon: iconFor(o.$3), shadow: false),
                 title: Text(o.$1),
-                subtitle: Text(o.$2.replaceFirst(kRoot, 'Almacenamiento'), style: const TextStyle(color: kDim, fontSize: 12)),
+                subtitle: Text(o.$2.replaceFirst(kRoot, rootLabel), style: const TextStyle(color: kDim, fontSize: 12)),
                 onTap: () => Navigator.of(ctx).pop(o),
               ),
           ]),

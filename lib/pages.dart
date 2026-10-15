@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
-import 'package:photo_manager/photo_manager.dart';
 
+import 'desktop.dart';
 import 'editor.dart';
 import 'explorer.dart';
 import 'fan.dart';
@@ -49,6 +49,10 @@ void openDrawer(BuildContext context, String id) {
 }
 
 Future<void> openFile(BuildContext context, String path) async {
+  if (isWin) {
+    if (!await Desk.openPath(path) && context.mounted) toast(context, 'No se ha podido abrir el archivo');
+    return;
+  }
   final r = await OpenFilex.open(path);
   if (r.type != ResultType.done && context.mounted) {
     toast(context, r.type == ResultType.noAppToOpen ? 'No hay ninguna app para abrir este archivo' : 'No se ha podido abrir: ${r.message}');
@@ -295,7 +299,7 @@ class _PhotoViewerState extends State<PhotoViewer> {
 
 class _FullPhoto extends StatefulWidget {
   const _FullPhoto({required this.asset});
-  final AssetEntity asset;
+  final PhotoItem asset;
   @override
   State<_FullPhoto> createState() => _FullPhotoState();
 }
