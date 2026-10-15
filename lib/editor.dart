@@ -254,10 +254,8 @@ Future<void> editDrawer(BuildContext context, DrawerCfg d, {bool isNew = false})
                   icon: const Icon(Icons.delete_outline),
                   label: const Text('Quitar del escritorio'),
                   onPressed: () {
-                    final idx = app.drawers.indexOf(d);
-                    app.removeDrawer(d);
                     Navigator.of(ctx).pop();
-                    _undoRemove(context, d, idx);
+                    removeFromDesk(context, d);
                   },
                 ),
               ]),
@@ -269,28 +267,25 @@ Future<void> editDrawer(BuildContext context, DrawerCfg d, {bool isNew = false})
   );
 }
 
-void _undoRemove(BuildContext context, DrawerCfg d, int idx) {
+/// Quitar un icono del escritorio o de la barra (con deshacer).
+void removeFromDesk(BuildContext context, DrawerCfg d) {
+  final dockIndex = app.dock.indexOf(d.id);
+  final pos = d.pos;
+  app.removeDrawer(d);
   final m = ScaffoldMessenger.maybeOf(context);
   m?.hideCurrentSnackBar();
   m?.showSnackBar(SnackBar(
-    content: Text('«${d.name}» quitado del escritorio'),
+    content: Text('«${d.name}» quitado'),
     behavior: SnackBarBehavior.floating,
     backgroundColor: kSheet2,
-    action: SnackBarAction(label: 'Deshacer', textColor: kGlow, onPressed: () => app.insertDrawer(idx, d)),
+    action: SnackBarAction(label: 'Deshacer', textColor: kGlow, onPressed: () => app.restoreDrawer(d, dockIndex, pos)),
   ));
-}
-
-/// Quitar un icono desde el modo edición del escritorio (con deshacer).
-void removeFromDesk(BuildContext context, DrawerCfg d) {
-  final idx = app.drawers.indexOf(d);
-  app.removeDrawer(d);
-  _undoRemove(context, d, idx);
 }
 
 // ======================================================================
 // Añadir al escritorio
 // ======================================================================
-Future<void> addToDesk(BuildContext context) async {
+Future<void> addToDesk(BuildContext context, {int page = 0, bool toDock = false}) async {
   final hidden = app.hiddenBuiltins();
   final choice = await showModalBottomSheet<String>(
     context: context,
@@ -311,11 +306,18 @@ Future<void> addToDesk(BuildContext context) async {
           ),
           ListTile(
             leading: Tile(size: 40, colors: pal(1), icon: Icons.apps_rounded, shadow: false),
-            title: const Text('Acceso a una app'),
-            subtitle: const Text('Un icono que abre la app directamente', style: TextStyle(color: kDim)),
+            title: const Text('Apps'),
+            subtitle: const Text('Elige una o varias; cada una con su icono de verdad', style: TextStyle(color: kDim)),
             onTap: () => Navigator.of(ctx).pop('app'),
           ),
-          if (isAndroid) ListTile(
+          if (!toDock)
+            ListTile(
+              leading: Tile(size: 40, colors: pal(7), icon: Icons.grid_view_rounded, shadow: false),
+              title: const Text('Todas mis apps'),
+              subtitle: const Text('Las que aún no están, por orden alfabético, en páginas nuevas', style: TextStyle(color: kDim)),
+              onTap: () => Navigator.of(ctx).pop('allapps'),
+            ),
+          if (isAndroid && !toDock) ListTile(
             leading: Tile(size: 40, colors: pal(3), icon: Icons.widgets_outlined, shadow: false),
             title: const Text('Widget'),
             subtitle: const Text('Reloj, tiempo, calendario, notas… de tus apps', style: TextStyle(color: kDim)),
@@ -339,18 +341,30 @@ Future<void> addToDesk(BuildContext context) async {
   );
   if (choice == null || !context.mounted) return;
   if (choice == 'custom') {
-    final d = app.addDrawer(DrawerCfg(app.newId(), 'Mi cajón', 6, 'star', type: 'custom'));
+    final d = app.addDrawer(DrawerCfg(app.newId(), 'Mi cajón', 6, 'star', type: 'custom'), fromPage: page, toDock: toDock);
     await editDrawer(context, d, isNew: true);
   } else if (choice == 'app') {
-    final apps = await pickApps(context, single: true);
+    final apps = await pickApps(context);
     if (apps.isEmpty) return;
-    final s = apps.first;
-    app.addDrawer(DrawerCfg(app.newId(), s.label, 1, 'apps', type: 'app', pkg: s.value));
+    if (toDock) {
+      for (final s in apps) {
+        app.addDrawer(DrawerCfg(app.newId(), s.label, 1, 'apps', type: 'app', pkg: s.value), toDock: true);
+      }
+    } else {
+      app.addMany([for (final s in apps) DrawerCfg(app.newId(), s.label, 1, 'apps', type: 'app', pkg: s.value)], fromPage: page);
+    }
+  } else if (choice == 'allapps') {
+    if (!app.appsLoaded) await app.loadApps();
+    final have = app.drawers.where((d) => d.type == 'app').map((d) => d.pkg).toSet();
+    final missing = app.apps.where((a) => !have.contains(a.pkg)).toList();
+    var id = DateTime.now().microsecondsSinceEpoch;
+    app.addMany([for (final a in missing) DrawerCfg('c${id++}', a.label, 1, 'apps', type: 'app', pkg: a.pkg)], fromPage: app.pageCount);
+    if (context.mounted) toast(context, '${missing.length} apps añadidas');
   } else if (choice == 'widget') {
-    await pickWidget(context);
+    await pickWidget(context, page: page);
   } else if (choice.startsWith('builtin:')) {
     final t = choice.substring(8);
-    app.addDrawer(defaultDrawers().firstWhere((b) => b.type == t));
+    app.addDrawer(defaultDrawers().firstWhere((b) => b.type == t), fromPage: page, toDock: toDock);
   }
 }
 
@@ -595,7 +609,7 @@ String browserName() {
 }
 
 /// Elegir un widget de Android y colocarlo en el escritorio.
-Future<void> pickWidget(BuildContext context) async {
+Future<void> pickWidget(BuildContext context, {int page = 0}) async {
   final list = await Native.widgetProviders();
   if (!context.mounted) return;
   var q = '';
@@ -659,6 +673,6 @@ Future<void> pickWidget(BuildContext context) async {
     if (context.mounted) toast(context, 'No se ha añadido el widget');
     return;
   }
-  final h = (pick.minH + 24).clamp(110.0, 360.0);
-  app.addWidget(WidgetCfg(id, pick.label, pick.pkg, h));
+  final rows = ((pick.minH + 20) / 100).ceil().clamp(1, 4);
+  app.addWidget(WidgetCfg(id, pick.label, pick.pkg, rows * 100.0), page: page, rows: rows);
 }

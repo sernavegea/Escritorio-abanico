@@ -65,12 +65,38 @@ class SettingsPage extends StatelessWidget {
               app.changed();
             },
           ),
-          const _H('Iconos del escritorio'),
+          const _H('Escritorio'),
+          ListTile(
+            leading: const Icon(Icons.grid_on),
+            title: const Text('Cuadrícula de iconos'),
+            subtitle: Text('${app.gridCols} columnas × ${app.gridRows} filas', style: const TextStyle(color: kDim)),
+            trailing: const Icon(Icons.chevron_right, color: kDim),
+            onTap: () => _pickGrid(context),
+          ),
+          ListTile(
+            leading: const Icon(Icons.view_sidebar_outlined),
+            title: const Text('Barra de iconos importantes'),
+            subtitle: Text(const {'left': 'A la izquierda', 'bottom': 'Abajo', 'none': 'Oculta'}[app.dockSide] ?? '', style: const TextStyle(color: kDim)),
+            trailing: SegmentedButton<String>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: 'left', icon: Icon(Icons.align_horizontal_left, size: 18)),
+                ButtonSegment(value: 'bottom', icon: Icon(Icons.align_vertical_bottom, size: 18)),
+                ButtonSegment(value: 'none', icon: Icon(Icons.visibility_off_outlined, size: 18)),
+              ],
+              selected: {app.dockSide},
+              onSelectionChanged: (v) {
+                app.dockSide = v.first;
+                app.changed();
+              },
+            ),
+          ),
+          const _H('Cajones'),
           const Padding(
             padding: EdgeInsets.fromLTRB(18, 0, 18, 6),
-            child: Text('Para moverlos, añadir o quitar: botón del lápiz en el escritorio.', style: TextStyle(color: kDim, fontSize: 13)),
+            child: Text('Para mover, añadir o quitar iconos: botón del lápiz en el escritorio, o mantén pulsado un hueco vacío.', style: TextStyle(color: kDim, fontSize: 13)),
           ),
-          for (final d in app.drawers)
+          for (final d in app.drawers.where((d) => d.type != 'app'))
             ListTile(
               leading: DrawerTile(id: d.id, size: 40, shadow: false),
               title: Text(d.name),
@@ -175,6 +201,39 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
+
+  Future<void> _pickGrid(BuildContext context) async {
+    const options = [(4, 5), (4, 6), (5, 5), (5, 6), (5, 7), (6, 6), (6, 7), (7, 5), (8, 5), (8, 6), (10, 6)];
+    await showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: kSheet,
+      builder: (ctx) => SafeArea(
+        child: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(18, 18, 18, 4),
+              child: Align(alignment: Alignment.centerLeft, child: Text('Cuadrícula', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600))),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(18, 0, 18, 8),
+              child: Text('Los iconos se recolocan en orden. Con el móvil desplegado caben más columnas.', style: TextStyle(color: kDim, fontSize: 13)),
+            ),
+            for (final o in options)
+              ListTile(
+                title: Text('${o.$1} columnas × ${o.$2} filas'),
+                trailing: app.gridCols == o.$1 && app.gridRows == o.$2 ? const Icon(Icons.check, color: kGlow) : null,
+                onTap: () {
+                  app.setGrid(o.$1, o.$2);
+                  Navigator.of(ctx).pop();
+                },
+              ),
+            const SizedBox(height: 8),
+          ]),
+        ),
+      ),
+    );
+  }
 }
 
 class _H extends StatelessWidget {

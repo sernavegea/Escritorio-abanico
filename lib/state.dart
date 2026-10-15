@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -66,6 +67,7 @@ class DrawerCfg {
   String mode; // auto | custom
   List<Acceso> items;
   String pkg; // solo para type == app
+  int pos = -1; // casilla en el escritorio (página * casillasPorPágina + fila * columnas + columna); -1 = no está
 
   bool get builtin => builtinTypes.contains(type);
   bool get customFan => type == 'custom' || mode == 'custom';
@@ -79,6 +81,7 @@ class DrawerCfg {
         'mode': mode,
         'items': items.map((e) => e.toJson()).toList(),
         'pkg': pkg,
+        'pos': pos,
       };
   static DrawerCfg fromJson(Map<String, dynamic> j) => DrawerCfg(
         j['id'] as String,
@@ -91,7 +94,7 @@ class DrawerCfg {
             ? (j['items'] as List).map((e) => Acceso.fromJson(Map<String, dynamic>.from(e as Map))).toList()
             : <Acceso>[],
         pkg: (j['pkg'] ?? '') as String,
-      );
+      )..pos = ((j['pos'] ?? -1) as num).toInt();
 }
 
 /// Una notificación que se muestra como bocadillo en el escritorio.
@@ -121,10 +124,16 @@ class WidgetCfg {
   final int id;
   String label;
   final String pkg;
-  double height;
-  Map<String, dynamic> toJson() => {'id': id, 'label': label, 'pkg': pkg, 'height': height};
+  double height; // solo para pasar de versiones antiguas
+  int page = 0;
+  int row = 0;
+  int rows = 2;
+  Map<String, dynamic> toJson() => {'id': id, 'label': label, 'pkg': pkg, 'height': height, 'page': page, 'row': row, 'rows': rows};
   static WidgetCfg fromJson(Map<String, dynamic> j) =>
-      WidgetCfg((j['id'] as num).toInt(), (j['label'] ?? '') as String, (j['pkg'] ?? '') as String, ((j['height'] ?? 180) as num).toDouble());
+      WidgetCfg((j['id'] as num).toInt(), (j['label'] ?? '') as String, (j['pkg'] ?? '') as String, ((j['height'] ?? 180) as num).toDouble())
+        ..page = ((j['page'] ?? 0) as num).toInt()
+        ..row = ((j['row'] ?? 0) as num).toInt()
+        ..rows = ((j['rows'] ?? 2) as num).toInt();
 }
 
 class LinkItem {
@@ -207,6 +216,11 @@ class AppState extends ChangeNotifier {
   bool showHidden = false;
   String browserPkg = '';
   List<WidgetCfg> widgets = [];
+  List<String> dock = [];
+  int gridCols = isWin ? 8 : 4;
+  int gridRows = isWin ? 5 : 6;
+  String dockSide = 'left'; // left | bottom | none
+  int layoutV = 0;
   bool showNotifs = true;
   List<Notif> notifs = [];
   bool notifAccess = false;
@@ -231,6 +245,7 @@ class AppState extends ChangeNotifier {
         _fromJson(jsonDecode(s) as Map<String, dynamic>);
       } catch (_) {}
     }
+    _migrate();
     notifyListeners();
     refreshAll();
   }
@@ -245,34 +260,194 @@ class AppState extends ChangeNotifier {
   DrawerCfg drawer(String id) => drawers.firstWhere((d) => d.id == id,
       orElse: () => defaultDrawers().firstWhere((d) => d.id == id, orElse: () => DrawerCfg(id, '?', 7, 'star', type: 'custom')));
 
-  // ---------- Escritorio ----------
-  void moveDrawerTo(String id, int index) {
-    final from = drawers.indexWhere((d) => d.id == id);
-    if (from < 0) return;
-    final d = drawers.removeAt(from);
-    drawers.insert(index.clamp(0, drawers.length), d);
-    changed();
+  // ---------- Escritorio: cuadrícula con páginas y barra lateral ----------
+  int get perPage => gridCols * gridRows;
+  int pageOf(int slot) => slot ~/ perPage;
+  int rowOf(int slot) => (slot % perPage) ~/ gridCols;
+  int colOf(int slot) => slot % gridCols;
+
+  bool blocked(int slot) {
+    final p = pageOf(slot), r = rowOf(slot);
+    return widgets.any((w) => w.page == p && r >= w.row && r < w.row + w.rows);
   }
 
-  List<DrawerCfg> hiddenBuiltins() =>
-      defaultDrawers().where((b) => !drawers.any((d) => d.type == b.type)).toList();
+  List<DrawerCfg> get deskItems => drawers.where((d) => d.pos >= 0 && !dock.contains(d.id)).toList();
+  List<DrawerCfg> get dockItems => [for (final id in dock) ...drawers.where((d) => d.id == id)];
 
-  DrawerCfg addDrawer(DrawerCfg d) {
+  DrawerCfg? itemAt(int slot) {
+    for (final d in drawers) {
+      if (d.pos == slot && !dock.contains(d.id)) return d;
+    }
+    return null;
+  }
+
+  bool slotFree(int slot) => !blocked(slot) && itemAt(slot) == null;
+
+  int firstFree([int fromPage = 0]) {
+    var s = max(0, fromPage) * perPage;
+    while (!slotFree(s)) {
+      s++;
+    }
+    return s;
+  }
+
+  int get pageCount {
+    var m = 1;
+    for (final d in deskItems) {
+      m = max(m, pageOf(d.pos) + 1);
+    }
+    for (final w in widgets) {
+      m = max(m, w.page + 1);
+    }
+    return m;
+  }
+
+  List<DrawerCfg> hiddenBuiltins() => defaultDrawers().where((b) => !drawers.any((d) => d.type == b.type)).toList();
+
+  String newId() => 'c${DateTime.now().microsecondsSinceEpoch}';
+
+  DrawerCfg addDrawer(DrawerCfg d, {int fromPage = 0, bool toDock = false}) {
     drawers.add(d);
+    if (toDock) {
+      dock.add(d.id);
+    } else {
+      d.pos = firstFree(fromPage);
+    }
     changed();
     return d;
   }
 
-  String newId() => 'c${DateTime.now().microsecondsSinceEpoch}';
-
-  void removeDrawer(DrawerCfg d) {
-    drawers.remove(d);
+  void addMany(List<DrawerCfg> list, {int fromPage = 0}) {
+    for (final d in list) {
+      drawers.add(d);
+      d.pos = firstFree(fromPage);
+    }
     changed();
   }
 
-  void insertDrawer(int index, DrawerCfg d) {
-    drawers.insert(index.clamp(0, drawers.length), d);
+  /// Mueve un icono a una casilla. Si está ocupada, los dos se intercambian.
+  void moveToSlot(String id, int slot) {
+    final i = drawers.indexWhere((d) => d.id == id);
+    if (i < 0 || blocked(slot)) return;
+    final d = drawers[i];
+    final other = itemAt(slot);
+    if (other != null && other.id == id) return;
+    final fromDock = dock.indexOf(id);
+    if (other != null) {
+      if (fromDock >= 0) {
+        dock[fromDock] = other.id;
+        other.pos = -1;
+      } else {
+        other.pos = d.pos;
+      }
+    } else if (fromDock >= 0) {
+      dock.removeAt(fromDock);
+    }
+    d.pos = slot;
     changed();
+  }
+
+  /// Mete un icono en la barra lateral en esa posición.
+  void moveToDock(String id, int index) {
+    final i = drawers.indexWhere((d) => d.id == id);
+    if (i < 0) return;
+    final old = dock.indexOf(id);
+    var at = index;
+    if (old >= 0) {
+      dock.removeAt(old);
+      if (old < at) at--;
+    }
+    drawers[i].pos = -1;
+    dock.insert(at.clamp(0, dock.length), id);
+    changed();
+  }
+
+  void removeDrawer(DrawerCfg d) {
+    drawers.remove(d);
+    dock.remove(d.id);
+    changed();
+  }
+
+  void restoreDrawer(DrawerCfg d, int dockIndex, int pos) {
+    drawers.add(d);
+    if (dockIndex >= 0) {
+      dock.insert(min(dockIndex, dock.length), d.id);
+    } else {
+      d.pos = -1;
+      d.pos = (pos >= 0 && slotFree(pos)) ? pos : firstFree();
+    }
+    changed();
+  }
+
+  /// Saca los iconos que hayan quedado debajo de un widget y los coloca en huecos libres.
+  void _relocate() {
+    final moved = deskItems.where((d) => blocked(d.pos)).toList();
+    for (final d in moved) {
+      final page = pageOf(d.pos);
+      d.pos = -1;
+      d.pos = firstFree(page);
+    }
+  }
+
+  /// Recoloca todo en orden cuando cambia el tamaño de la cuadrícula.
+  void reflow() {
+    for (final w in widgets) {
+      w.rows = w.rows.clamp(1, gridRows);
+      w.row = w.row.clamp(0, gridRows - w.rows);
+    }
+    final items = deskItems..sort((a, b) => a.pos.compareTo(b.pos));
+    for (final d in items) {
+      d.pos = -1;
+    }
+    for (final d in items) {
+      d.pos = firstFree();
+    }
+    changed();
+  }
+
+  void setGrid(int cols, int rows) {
+    // Conserva el orden de lectura de los iconos al cambiar la cuadrícula.
+    final items = deskItems..sort((a, b) => a.pos.compareTo(b.pos));
+    gridCols = cols;
+    gridRows = rows;
+    for (var k = 0; k < items.length; k++) {
+      items[k].pos = -1;
+    }
+    for (final w in widgets) {
+      w.rows = w.rows.clamp(1, gridRows);
+      w.row = w.row.clamp(0, gridRows - w.rows);
+    }
+    for (final d in items) {
+      d.pos = firstFree();
+    }
+    changed();
+  }
+
+  void _migrate() {
+    if (layoutV >= 2) return;
+    dock = [
+      for (final t in ['apps', 'fotos', 'files', 'ia'])
+        ...drawers.where((d) => d.type == t).take(1).map((d) => d.id),
+    ];
+    for (final d in drawers) {
+      d.pos = -1;
+    }
+    var page = 0, row = 0;
+    for (final w in widgets) {
+      w.rows = (w.height / 110).round().clamp(1, 4);
+      if (row + w.rows > gridRows) {
+        page++;
+        row = 0;
+      }
+      w.page = page;
+      w.row = row;
+      row += w.rows;
+    }
+    for (final d in drawers) {
+      if (!dock.contains(d.id)) d.pos = firstFree();
+    }
+    layoutV = 2;
+    save();
   }
 
   // ---------- Notificaciones ----------
@@ -299,8 +474,41 @@ class AppState extends ChangeNotifier {
   }
 
   // ---------- Widgets ----------
-  void addWidget(WidgetCfg w) {
+  bool _widgetFits(WidgetCfg w, int page, int row, {bool allowIcons = true}) {
+    if (row < 0 || row + w.rows > gridRows) return false;
+    for (final o in widgets) {
+      if (o == w || o.page != page) continue;
+      if (row < o.row + o.rows && o.row < row + w.rows) return false;
+    }
+    if (!allowIcons) {
+      for (final d in deskItems) {
+        final r = rowOf(d.pos);
+        if (pageOf(d.pos) == page && r >= row && r < row + w.rows) return false;
+      }
+    }
+    return true;
+  }
+
+  /// Coloca un widget nuevo: primero busca filas vacías; si no hay, lo pone arriba y aparta los iconos.
+  void addWidget(WidgetCfg w, {int page = 0, int rows = 2}) {
+    w.rows = rows.clamp(1, gridRows);
+    var placed = false;
+    for (var p = page; p < pageCount + 1 && !placed; p++) {
+      for (var r = 0; r + w.rows <= gridRows; r++) {
+        if (_widgetFits(w, p, r, allowIcons: false)) {
+          w.page = p;
+          w.row = r;
+          placed = true;
+          break;
+        }
+      }
+    }
+    if (!placed) {
+      w.page = pageCount;
+      w.row = 0;
+    }
     widgets.add(w);
+    _relocate();
     changed();
   }
 
@@ -310,13 +518,45 @@ class AppState extends ChangeNotifier {
     changed();
   }
 
-  void moveWidget(WidgetCfg w, int delta) {
-    final i = widgets.indexOf(w);
-    final j = i + delta;
-    if (i < 0 || j < 0 || j >= widgets.length) return;
-    widgets.removeAt(i);
-    widgets.insert(j, w);
+  void moveWidget(WidgetCfg w, int deltaRow) {
+    var r = w.row + deltaRow;
+    while (r >= 0 && r + w.rows <= gridRows && !_widgetFits(w, w.page, r)) {
+      r += deltaRow;
+    }
+    if (r < 0 || r + w.rows > gridRows) return;
+    w.row = r;
+    _relocate();
     changed();
+  }
+
+  void moveWidgetPage(WidgetCfg w, int delta) {
+    final p = w.page + delta;
+    if (p < 0) return;
+    for (var r = 0; r + w.rows <= gridRows; r++) {
+      if (_widgetFits(w, p, r)) {
+        w.page = p;
+        w.row = r;
+        _relocate();
+        changed();
+        return;
+      }
+    }
+  }
+
+  void resizeWidget(WidgetCfg w) {
+    var n = w.rows + 1;
+    if (n > gridRows - w.row || !_widgetFitsRows(w, n)) n = 1;
+    w.rows = n;
+    _relocate();
+    changed();
+  }
+
+  bool _widgetFitsRows(WidgetCfg w, int n) {
+    final old = w.rows;
+    w.rows = n;
+    final ok = _widgetFits(w, w.page, w.row);
+    w.rows = old;
+    return ok;
   }
 
   // ---------- Navegador ----------
@@ -340,6 +580,11 @@ class AppState extends ChangeNotifier {
         'browserPkg': browserPkg,
         'widgets': widgets.map((w) => w.toJson()).toList(),
         'showNotifs': showNotifs,
+        'dock': dock,
+        'gridCols': gridCols,
+        'gridRows': gridRows,
+        'dockSide': dockSide,
+        'layoutV': layoutV,
       };
 
   void _fromJson(Map<String, dynamic> j) {
@@ -348,6 +593,11 @@ class AppState extends ChangeNotifier {
     }
     browserPkg = (j['browserPkg'] ?? '') as String;
     showNotifs = (j['showNotifs'] ?? true) as bool;
+    if (j['dock'] is List) dock = (j['dock'] as List).map((e) => e as String).toList();
+    gridCols = ((j['gridCols'] ?? gridCols) as num).toInt();
+    gridRows = ((j['gridRows'] ?? gridRows) as num).toInt();
+    dockSide = (j['dockSide'] ?? dockSide) as String;
+    layoutV = ((j['layoutV'] ?? 0) as num).toInt();
     if (j['widgets'] is List) {
       widgets = (j['widgets'] as List).map((e) => WidgetCfg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
     }
@@ -374,6 +624,9 @@ class AppState extends ChangeNotifier {
 
   Future<void> resetLook() async {
     drawers = defaultDrawers();
+    dock = [];
+    layoutV = 0;
+    _migrate();
     wallpaper = 'laguna';
     wallpaperFile = null;
     iconSize = 72;
