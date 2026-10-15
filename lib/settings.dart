@@ -131,6 +131,7 @@ class SettingsPage extends StatelessWidget {
             subtitle: const Text('En la lista de Android, activa «Abanico» y vuelve', style: TextStyle(color: kDim)),
             onTap: Native.requestNotifAccess,
           ),
+          const _NotifStatus(),
           const _H('Inteligencia artificial'),
           ListTile(
             leading: const Icon(Icons.key_outlined),
@@ -278,6 +279,43 @@ class _WallpaperPickerState extends State<WallpaperPicker> {
                 ),
         );
       },
+    );
+  }
+}
+
+/// Estado del servicio de notificaciones, para saber qué falla si no salen los bocadillos.
+class _NotifStatus extends StatefulWidget {
+  const _NotifStatus();
+  @override
+  State<_NotifStatus> createState() => _NotifStatusState();
+}
+
+class _NotifStatusState extends State<_NotifStatus> {
+  Map<String, dynamic> st = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final r = await Native.notifStatus();
+    await app.loadNotifs();
+    if (mounted) setState(() => st = r);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    String yn(Object? v) => v == true ? 'sí' : 'no';
+    final text = st.isEmpty
+        ? 'Comprobando…'
+        : 'Permiso: ${yn(st['access'])} · Conectado: ${yn(st['connected'])} · Recibidas: ${st['seen'] ?? 0} · En pantalla: ${st['count'] ?? 0}';
+    return ListTile(
+      leading: const Icon(Icons.info_outline, color: kDim),
+      title: const Text('Estado'),
+      subtitle: Text(text, style: const TextStyle(color: kDim, fontSize: 12)),
+      trailing: IconButton(tooltip: 'Volver a comprobar', icon: const Icon(Icons.refresh), onPressed: _load),
     );
   }
 }

@@ -122,6 +122,15 @@ class Native {
     }
   }
 
+  static Future<Map<String, dynamic>> notifStatus() async {
+    try {
+      final r = await ch.invokeMethod<Map<dynamic, dynamic>>('notifStatus');
+      return r == null ? {} : Map<String, dynamic>.from(r);
+    } catch (_) {
+      return {};
+    }
+  }
+
   static Future<void> requestNotifAccess() async {
     try {
       await ch.invokeMethod('requestNotifAccess');

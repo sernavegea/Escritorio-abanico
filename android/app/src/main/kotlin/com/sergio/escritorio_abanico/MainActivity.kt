@@ -216,8 +216,20 @@ class MainActivity : FlutterActivity() {
                     val id = call.argument<Int>("id") ?: -1
                     result.success(id >= 0 && widgetManager?.getAppWidgetInfo(id) != null)
                 }
-                "notifs" -> result.success(notifList())
+                "notifs" -> {
+                    ensureListener()
+                    result.success(notifList())
+                }
                 "notifAccess" -> result.success(hasNotifAccess())
+                "notifStatus" -> {
+                    ensureListener()
+                    result.success(mapOf(
+                        "access" to hasNotifAccess(),
+                        "connected" to (NotiBridge.service != null),
+                        "count" to NotiBridge.items.size,
+                        "seen" to NotiBridge.seen
+                    ))
+                }
                 "requestNotifAccess" -> {
                     try { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
                     catch (e: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
@@ -294,8 +306,23 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun hasNotifAccess(): Boolean {
+        if (Build.VERSION.SDK_INT >= 27) {
+            try {
+                val nm = getSystemService(android.app.NotificationManager::class.java)
+                if (nm != null) return nm.isNotificationListenerAccessGranted(ComponentName(this, NotiService::class.java))
+            } catch (e: Exception) {}
+        }
         val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: return false
         return flat.split(":").any { it.startsWith("$packageName/") }
+    }
+
+    /** Si hay permiso pero Android no ha conectado el servicio (pasa tras actualizar la app), se lo pedimos. */
+    private fun ensureListener() {
+        if (NotiBridge.service == null && hasNotifAccess() && Build.VERSION.SDK_INT >= 24) {
+            try {
+                android.service.notification.NotificationListenerService.requestRebind(ComponentName(this, NotiService::class.java))
+            } catch (e: Exception) {}
+        }
     }
 
     private fun pushNotifs() {

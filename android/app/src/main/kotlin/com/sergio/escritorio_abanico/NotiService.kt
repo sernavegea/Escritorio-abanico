@@ -9,6 +9,7 @@ object NotiBridge {
     val items = LinkedHashMap<String, StatusBarNotification>()
     var onChange: (() -> Unit)? = null
     var service: NotiService? = null
+    var seen = 0
 }
 
 class NotiService : NotificationListenerService() {
@@ -29,6 +30,7 @@ class NotiService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        NotiBridge.seen++
         add(sbn)
         NotiBridge.onChange?.invoke()
     }

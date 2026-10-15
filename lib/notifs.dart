@@ -20,6 +20,11 @@ class _NotifBubblesState extends State<NotifBubbles> {
 
   @override
   Widget build(BuildContext context) {
+    // Escucha los cambios: cada notificación nueva vuelve a pintar los bocadillos.
+    return ListenableBuilder(listenable: app, builder: (context, _) => _build(context));
+  }
+
+  Widget _build(BuildContext context) {
     if (!app.showNotifs) return const SizedBox.shrink();
     final maxW = min(MediaQuery.of(context).size.width - 32, 560.0);
     if (!app.notifAccess) {
