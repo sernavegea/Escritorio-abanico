@@ -52,3 +52,45 @@ jobs:
           name: Abanico 0.1.${{ github.run_number }}
           body: APK compilado automáticamente. Descárgalo desde el móvil e instálalo.
           files: Abanico-*.apk
+
+  windows:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generar la parte de Windows
+        run: flutter create --platforms=windows --org com.sergio --project-name escritorio_abanico .
+
+      - name: Nombre, icono y ventana maximizada
+        shell: pwsh
+        run: |
+          $m = 'windows\runner\main.cpp'
+          (Get-Content $m -Raw) -replace 'L"escritorio_abanico"', 'L"Abanico"' | Set-Content $m -Encoding utf8
+          $w = 'windows\runner\win32_window.cpp'
+          (Get-Content $w -Raw) -replace 'SW_SHOWNORMAL', 'SW_SHOWMAXIMIZED' | Set-Content $w -Encoding utf8
+          Copy-Item ci\app_icon.ico windows\runner\resources\app_icon.ico -Force
+
+      - run: flutter pub get
+
+      - name: Compilar para Windows
+        run: flutter build windows --release
+
+      - name: Empaquetar
+        shell: pwsh
+        run: |
+          $out = "Abanico-Windows-0.1.${{ github.run_number }}"
+          Copy-Item build\windows\x64\runner\Release $out -Recurse
+          Rename-Item "$out\escritorio_abanico.exe" "Abanico.exe"
+          Compress-Archive -Path $out -DestinationPath "$out.zip"
+
+      - name: Añadir a la versión descargable
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.${{ github.run_number }}
+          files: Abanico-Windows-*.zip
