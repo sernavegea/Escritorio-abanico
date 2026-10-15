@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'editor.dart';
 import 'fan.dart';
 import 'native.dart';
+import 'notifs.dart';
 import 'pages.dart';
 import 'settings.dart';
 import 'state.dart';
@@ -25,6 +26,10 @@ Future<void> main() async {
   ));
   // El botón de inicio de Android con el escritorio ya abierto: cerrar todo y volver.
   Native.ch.setMethodCallHandler((call) async {
+    if (call.method == 'notifs') {
+      app.setNotifs((call.arguments as List?) ?? const []);
+      return null;
+    }
     if (call.method == 'home') {
       fan.close();
       navKey.currentState?.popUntil((r) => r.isFirst);
@@ -97,6 +102,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       setState(() => now = DateTime.now());
+      app.loadNotifs();
       if (DateTime.now().difference(lastRefresh).inSeconds > 20) {
         lastRefresh = DateTime.now();
         app.refreshAll();
@@ -190,6 +196,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       child: ConstrainedBox(
                         constraints: BoxConstraints(minHeight: box.maxHeight - 40),
                         child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                          if (!editing) const NotifBubbles(),
                           for (final w in app.widgets) _WidgetBox(key: ValueKey('w${w.id}'), cfg: w, editing: editing),
                           if (app.widgets.isNotEmpty) const SizedBox(height: 12),
                           _grid(context),

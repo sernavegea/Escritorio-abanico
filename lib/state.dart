@@ -74,6 +74,27 @@ class DrawerCfg {
       );
 }
 
+/// Una notificación que se muestra como bocadillo en el escritorio.
+class Notif {
+  Notif(this.key, this.pkg, this.app, this.title, this.text, this.time, this.reply);
+  final String key;
+  final String pkg;
+  final String app;
+  final String title;
+  final String text;
+  final DateTime time;
+  final bool reply;
+  static Notif fromMap(Map<String, dynamic> m) => Notif(
+        (m['key'] ?? '') as String,
+        (m['pkg'] ?? '') as String,
+        (m['app'] ?? '') as String,
+        (m['title'] ?? '') as String,
+        (m['text'] ?? '') as String,
+        DateTime.fromMillisecondsSinceEpoch(((m['time'] ?? 0) as num).toInt()),
+        (m['reply'] ?? false) as bool,
+      );
+}
+
 /// Un widget de Android colocado en el escritorio.
 class WidgetCfg {
   WidgetCfg(this.id, this.label, this.pkg, this.height);
@@ -165,6 +186,9 @@ class AppState extends ChangeNotifier {
   bool showHidden = false;
   String browserPkg = '';
   List<WidgetCfg> widgets = [];
+  bool showNotifs = true;
+  List<Notif> notifs = [];
+  bool notifAccess = false;
 
   // Datos del dispositivo (no se guardan).
   List<AppEntry> apps = [];
@@ -191,6 +215,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> refreshAll() async {
+    await loadNotifs();
     await loadApps();
     if (_prefs?.getBool('photosOk') == true) await loadPhotos();
     await loadDocs();
@@ -227,6 +252,29 @@ class AppState extends ChangeNotifier {
   void insertDrawer(int index, DrawerCfg d) {
     drawers.insert(index.clamp(0, drawers.length), d);
     changed();
+  }
+
+  // ---------- Notificaciones ----------
+  Future<void> loadNotifs() async {
+    notifAccess = await Native.notifAccess();
+    if (notifAccess) {
+      setNotifs(await Native.notifs());
+    } else {
+      notifs = [];
+      notifyListeners();
+    }
+  }
+
+  void setNotifs(List<dynamic> raw) {
+    notifs = raw.map((e) => Notif.fromMap(Map<String, dynamic>.from(e as Map))).toList();
+    if (notifs.isNotEmpty) notifAccess = true;
+    notifyListeners();
+  }
+
+  void dropNotif(String key) {
+    notifs.removeWhere((n) => n.key == key);
+    notifyListeners();
+    Native.dismissNotif(key);
   }
 
   // ---------- Widgets ----------
@@ -270,6 +318,7 @@ class AppState extends ChangeNotifier {
         'showHidden': showHidden,
         'browserPkg': browserPkg,
         'widgets': widgets.map((w) => w.toJson()).toList(),
+        'showNotifs': showNotifs,
       };
 
   void _fromJson(Map<String, dynamic> j) {
@@ -277,6 +326,7 @@ class AppState extends ChangeNotifier {
       drawers = (j['drawers'] as List).map((e) => DrawerCfg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
     }
     browserPkg = (j['browserPkg'] ?? '') as String;
+    showNotifs = (j['showNotifs'] ?? true) as bool;
     if (j['widgets'] is List) {
       widgets = (j['widgets'] as List).map((e) => WidgetCfg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
     }

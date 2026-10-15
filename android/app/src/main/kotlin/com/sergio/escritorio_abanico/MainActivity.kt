@@ -1,6 +1,10 @@
 package com.sergio.escritorio_abanico
 
 import android.Manifest
+import android.app.ActivityOptions
+import android.app.Notification
+import android.app.PendingIntent
+import android.app.RemoteInput
 import android.appwidget.AppWidgetHost
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
@@ -19,6 +23,7 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.AlarmClock
 import android.provider.Settings
+import android.service.notification.StatusBarNotification
 import android.view.Gravity
 import android.view.View
 import android.widget.TextView
@@ -50,6 +55,7 @@ class MainActivity : FlutterActivity() {
         widgetManager = AppWidgetManager.getInstance(this)
         widgetHost = AppWidgetHost(applicationContext, hostId).also { h -> try { h.startListening() } catch (e: Exception) {} }
         flutterEngine.platformViewsController.registry.registerViewFactory("abanico/widget", WidgetFactory())
+        NotiBridge.onChange = { ui.post { pushNotifs() } }
         val ch = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "abanico/native")
         channel = ch
         ch.setMethodCallHandler { call, result ->
@@ -210,6 +216,58 @@ class MainActivity : FlutterActivity() {
                     val id = call.argument<Int>("id") ?: -1
                     result.success(id >= 0 && widgetManager?.getAppWidgetInfo(id) != null)
                 }
+                "notifs" -> result.success(notifList())
+                "notifAccess" -> result.success(hasNotifAccess())
+                "requestNotifAccess" -> {
+                    try { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    catch (e: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                    result.success(true)
+                }
+                "openNotif" -> {
+                    val sbn = NotiBridge.items[call.argument<String>("key") ?: ""]
+                    var ok = false
+                    if (sbn != null) {
+                        val pi = sbn.notification.contentIntent
+                        if (pi != null) ok = sendPending(pi, null)
+                        if (!ok) {
+                            val launch = packageManager.getLaunchIntentForPackage(sbn.packageName)
+                            if (launch != null) {
+                                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                startActivity(launch)
+                                ok = true
+                            }
+                        }
+                        if (ok && (sbn.notification.flags and Notification.FLAG_AUTO_CANCEL) != 0) {
+                            try { NotiBridge.service?.cancelNotification(sbn.key) } catch (e: Exception) {}
+                        }
+                    }
+                    result.success(ok)
+                }
+                "dismissNotif" -> {
+                    val key = call.argument<String>("key") ?: ""
+                    try { NotiBridge.service?.cancelNotification(key) } catch (e: Exception) {}
+                    if (NotiBridge.items.remove(key) != null) pushNotifs()
+                    result.success(true)
+                }
+                "replyNotif" -> {
+                    val sbn = NotiBridge.items[call.argument<String>("key") ?: ""]
+                    val text = call.argument<String>("text") ?: ""
+                    val action = if (sbn != null) replyAction(sbn) else null
+                    val inputs = action?.remoteInputs
+                    if (action == null || inputs == null || text.isBlank()) {
+                        result.success(false)
+                    } else {
+                        try {
+                            val intent = Intent()
+                            val bundle = Bundle()
+                            for (ri in inputs) bundle.putCharSequence(ri.resultKey, text)
+                            RemoteInput.addResultsToIntent(inputs, intent, bundle)
+                            result.success(sendPending(action.actionIntent, intent))
+                        } catch (e: Exception) {
+                            result.success(false)
+                        }
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -228,6 +286,58 @@ class MainActivity : FlutterActivity() {
     override fun onStop() {
         super.onStop()
         try { widgetHost?.stopListening() } catch (e: Exception) {}
+    }
+
+    override fun onDestroy() {
+        NotiBridge.onChange = null
+        super.onDestroy()
+    }
+
+    private fun hasNotifAccess(): Boolean {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: return false
+        return flat.split(":").any { it.startsWith("$packageName/") }
+    }
+
+    private fun pushNotifs() {
+        try { channel?.invokeMethod("notifs", notifList()) } catch (e: Exception) {}
+    }
+
+    private fun replyAction(sbn: StatusBarNotification): Notification.Action? =
+        sbn.notification.actions?.firstOrNull { a -> a.remoteInputs?.any { it.allowFreeFormInput } == true }
+
+    private fun notifList(): List<Map<String, Any>> {
+        val pm = packageManager
+        return NotiBridge.items.values.sortedByDescending { it.postTime }.take(15).map { sbn ->
+            val ex = sbn.notification.extras
+            val title = ex.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: ""
+            val text = (ex.getCharSequence(Notification.EXTRA_BIG_TEXT) ?: ex.getCharSequence(Notification.EXTRA_TEXT))?.toString() ?: ""
+            val label = try { pm.getApplicationLabel(pm.getApplicationInfo(sbn.packageName, 0)).toString() } catch (e: Exception) { sbn.packageName }
+            mapOf(
+                "key" to sbn.key,
+                "pkg" to sbn.packageName,
+                "app" to label,
+                "title" to title,
+                "text" to text,
+                "time" to sbn.postTime,
+                "reply" to (replyAction(sbn) != null)
+            )
+        }
+    }
+
+    private fun sendPending(pi: PendingIntent, fill: Intent?): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                val opts = ActivityOptions.makeBasic()
+                    .setPendingIntentBackgroundActivityStartMode(ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                    .toBundle()
+                pi.send(this, 0, fill, null, null, null, opts)
+            } else {
+                pi.send(this, 0, fill)
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun configureOrFinish(id: Int, result: MethodChannel.Result?) {

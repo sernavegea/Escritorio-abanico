@@ -114,6 +114,23 @@ class SettingsPage extends StatelessWidget {
               app.changed();
             },
           ),
+          const _H('Notificaciones'),
+          SwitchListTile(
+            title: const Text('Bocadillos de notificaciones en el escritorio'),
+            subtitle: const Text('Toca un bocadillo para abrir la conversación', style: TextStyle(color: kDim)),
+            value: app.showNotifs,
+            onChanged: (v) {
+              app.showNotifs = v;
+              app.changed();
+            },
+          ),
+          ListTile(
+            leading: Icon(app.notifAccess ? Icons.check_circle_outline : Icons.notifications_active_outlined,
+                color: app.notifAccess ? kGlow : kInk),
+            title: Text(app.notifAccess ? 'Acceso a notificaciones concedido' : 'Dar acceso a las notificaciones'),
+            subtitle: const Text('En la lista de Android, activa «Abanico» y vuelve', style: TextStyle(color: kDim)),
+            onTap: Native.requestNotifAccess,
+          ),
           const _H('Inteligencia artificial'),
           ListTile(
             leading: const Icon(Icons.key_outlined),

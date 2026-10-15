@@ -106,6 +106,50 @@ class Native {
     } catch (_) {}
   }
 
+  static Future<List<dynamic>> notifs() async {
+    try {
+      return await ch.invokeMethod<List<dynamic>>('notifs') ?? const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static Future<bool> notifAccess() async {
+    try {
+      return await ch.invokeMethod<bool>('notifAccess') ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> requestNotifAccess() async {
+    try {
+      await ch.invokeMethod('requestNotifAccess');
+    } catch (_) {}
+  }
+
+  static Future<bool> openNotif(String key) async {
+    try {
+      return await ch.invokeMethod<bool>('openNotif', {'key': key}) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> dismissNotif(String key) async {
+    try {
+      await ch.invokeMethod('dismissNotif', {'key': key});
+    } catch (_) {}
+  }
+
+  static Future<bool> replyNotif(String key, String text) async {
+    try {
+      return await ch.invokeMethod<bool>('replyNotif', {'key': key, 'text': text}) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<void> appInfo(String pkg) async {
     try {
       await ch.invokeMethod('appInfo', {'pkg': pkg});
