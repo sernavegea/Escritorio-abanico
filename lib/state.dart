@@ -34,9 +34,54 @@ class PhotoItem {
 }
 
 class AppEntry {
-  const AppEntry(this.label, this.pkg);
+  const AppEntry(this.label, this.pkg, {this.cat = -1, this.sys = false, this.game = false});
   final String label;
   final String pkg;
+  final int cat; // categoría de Android (0 juego, 1 audio, 2 vídeo, 3 imagen, 4 social, 5 noticias, 6 mapas, 7 productividad)
+  final bool sys; // viene con el móvil
+  final bool game;
+}
+
+/// Cajones que se crean solos al organizar el escritorio: id -> (nombre, color).
+const autoGroups = <String, (String, int)>{
+  'google': ('Google', 7),
+  'ent': ('Entretenimiento', 2),
+  'bank': ('Bancos', 1),
+  'util': ('Utilidades', 3),
+  'games': ('Juegos', 5),
+};
+
+const _bankWords = [
+  'banco', 'bank', 'bbva', 'santander', 'caixa', 'imagin', 'sabadell', 'openbank', 'unicaja', 'kutxa', 'cajamar',
+  'abanca', 'ibercaja', 'ruralvia', 'cajarural', 'caja rural', 'revolut', 'number26', 'n26', 'myinvestor', 'traderepublic',
+  'trade republic', 'paypal', 'bizum', 'transferwise', 'ingdirect', 'com.ing.', 'cajasur', 'wizink', 'cetelem', 'pibank',
+  'bunq', 'selfbank', 'renta4', 'evo banco', 'evobanco', 'banca', 'coinbase', 'binance', 'bit2me',
+];
+const _entWords = [
+  'netflix', 'spotify', 'primevideo', 'amazon.avod', 'disney', 'hbo', 'com.wbd', 'twitch', 'tiktok', 'musically', 'movistar',
+  'dazn', 'filmin', 'atresplayer', 'rtve', 'mitele', 'skyshowtime', 'crunchyroll', 'plex', 'kodi', 'vlc', 'deezer', 'music',
+  'música', 'musica', 'audible', 'ivoox', 'podcast', 'radio', 'video', 'vídeo', 'pluto', 'rakuten', 'soundcloud', 'shazam',
+  'tidal', 'kindle', 'wattpad', 'comic', 'cine', 'tv',
+];
+const _utilWords = [
+  'calcul', 'clock', 'reloj', 'notas', 'notes', 'recorder', 'grabadora', 'compass', 'brújula', 'brujula', 'weather', 'tiempo',
+  'linterna', 'flashlight', 'torch', 'scanner', 'escáner', 'escaner', 'manager', 'optimiz', 'backup', 'copia de seg', 'themes',
+  'temas', 'tips', 'consejos', 'mirror', 'espejo', 'herramient', 'tools', 'files', 'archivos', 'gestor', 'descargas', 'downloads',
+  'lupa', 'magnifier', 'calendar', 'calendario', 'vpn', 'antivirus', 'cleaner', 'limpi', 'wifi', 'bluetooth', 'qr',
+];
+
+/// En qué cajón automático va una app (o null si se queda suelta en el escritorio).
+String? groupOf(AppEntry a) {
+  final p = a.pkg.toLowerCase();
+  final t = '${a.label.toLowerCase()} $p';
+  bool has(List<String> ks) => ks.any(t.contains);
+  if (has(_bankWords)) return 'bank';
+  if (a.game || a.cat == 0) return 'games';
+  if (p.startsWith('com.google.') || p == 'com.android.chrome' || p == 'com.android.vending') return 'google';
+  if (a.cat == 1 || a.cat == 2 || has(_entWords)) return 'ent';
+  if (has(_utilWords)) return 'util';
+  if (a.sys && a.cat != 4) return 'util';
+  return null;
 }
 
 /// Un acceso directo dentro de un abanico elegido por el usuario.
@@ -221,6 +266,7 @@ class AppState extends ChangeNotifier {
   int gridRows = isWin ? 5 : 6;
   String dockSide = 'left'; // left | bottom | none
   int layoutV = 0;
+  Set<String> knownApps = {};
   bool showNotifs = true;
   List<Notif> notifs = [];
   bool notifAccess = false;
@@ -585,6 +631,7 @@ class AppState extends ChangeNotifier {
         'gridRows': gridRows,
         'dockSide': dockSide,
         'layoutV': layoutV,
+        'knownApps': knownApps.toList(),
       };
 
   void _fromJson(Map<String, dynamic> j) {
@@ -598,6 +645,7 @@ class AppState extends ChangeNotifier {
     gridRows = ((j['gridRows'] ?? gridRows) as num).toInt();
     dockSide = (j['dockSide'] ?? dockSide) as String;
     layoutV = ((j['layoutV'] ?? 0) as num).toInt();
+    if (j['knownApps'] is List) knownApps = (j['knownApps'] as List).map((e) => e as String).toSet();
     if (j['widgets'] is List) {
       widgets = (j['widgets'] as List).map((e) => WidgetCfg.fromJson(Map<String, dynamic>.from(e as Map))).toList();
     }
@@ -627,6 +675,7 @@ class AppState extends ChangeNotifier {
     dock = [];
     layoutV = 0;
     _migrate();
+    if (isAndroid && apps.isNotEmpty) await buildDefaultLayout();
     wallpaper = 'laguna';
     wallpaperFile = null;
     iconSize = 72;
@@ -642,7 +691,220 @@ class AppState extends ChangeNotifier {
     };
     apps = await Native.apps();
     appsLoaded = true;
+    if (isAndroid && apps.isNotEmpty) {
+      if (layoutV < 3) {
+        await buildDefaultLayout();
+      } else {
+        _syncApps();
+      }
+    }
     notifyListeners();
+  }
+
+  DrawerCfg _appDrawer(AppEntry a) => DrawerCfg('a_${a.pkg}', a.label, 1, 'apps', type: 'app', pkg: a.pkg);
+
+  /// Escritorio de serie: barra con WhatsApp, cámara, teléfono, fotos, archivos y ajustes;
+  /// cajones Google, Entretenimiento, Bancos, Utilidades y Juegos; y el resto de apps sueltas.
+  /// Conserva los cajones que haya creado el usuario y los widgets.
+  bool _building = false;
+  Future<void> buildDefaultLayout() async {
+    if (!isAndroid || apps.isEmpty || _building) return;
+    _building = true;
+    final Map<String, String> roles;
+    try {
+      roles = await Native.roles();
+    } finally {
+      _building = false;
+    }
+    final byPkg = {for (final a in apps) a.pkg: a};
+    String? pick(String role, List<String> pkgs, List<String> labels) {
+      final r = roles[role];
+      if (r != null && byPkg.containsKey(r)) return r;
+      for (final p in pkgs) {
+        if (byPkg.containsKey(p)) return p;
+      }
+      for (final a in apps) {
+        if (labels.contains(a.label.toLowerCase())) return a.pkg;
+      }
+      for (final a in apps) {
+        final l = a.label.toLowerCase();
+        if (labels.any(l.contains)) return a.pkg;
+      }
+      return null;
+    }
+
+    final wa = pick('', ['com.whatsapp', 'com.whatsapp.w4b'], ['whatsapp']);
+    final cam = pick('camera', [
+      'com.hihonor.camera', 'com.huawei.camera', 'com.android.camera', 'com.android.camera2', 'com.google.android.GoogleCamera',
+      'com.sec.android.app.camera', 'com.oplus.camera', 'com.motorola.camera3',
+    ], ['cámara', 'camara', 'camera']);
+    final phone = pick('phone', [
+      'com.hihonor.contacts', 'com.huawei.contacts', 'com.google.android.dialer', 'com.android.dialer', 'com.samsung.android.dialer',
+    ], ['teléfono', 'telefono', 'phone']);
+    final settings = pick('settings', ['com.android.settings'], ['ajustes', 'configuración', 'settings']);
+
+    // Fuera las apps sueltas y los cajones automáticos de antes; vuelven los cajones de serie que faltaran.
+    drawers.removeWhere((d) => d.type == 'app' || d.id.startsWith('g_'));
+    for (final b in defaultDrawers()) {
+      if (!drawers.any((d) => d.type == b.type)) drawers.add(b);
+    }
+    for (final d in drawers) {
+      d.pos = -1;
+    }
+    dock = [];
+    final dockPkgs = <String>{};
+    void dockApp(String? pkg) {
+      if (pkg == null || !dockPkgs.add(pkg)) return;
+      final d = _appDrawer(byPkg[pkg]!);
+      drawers.add(d);
+      dock.add(d.id);
+    }
+
+    void dockBuiltin(String type) {
+      for (final d in drawers) {
+        if (d.type == type) {
+          dock.add(d.id);
+          return;
+        }
+      }
+    }
+
+    dockApp(wa);
+    dockApp(cam);
+    dockApp(phone);
+    dockBuiltin('fotos');
+    dockBuiltin('files');
+    dockApp(settings);
+
+    // Las apps básicas del sistema (mensajes, contactos, navegador…) se quedan sueltas, no en Utilidades.
+    final core = {...dockPkgs, for (final k in ['sms', 'contacts', 'browser', 'email', 'gallery']) if (roles[k] != null) roles[k]!};
+    // Apps que el usuario ya metió en sus propios cajones-carpeta: no se repiten.
+    final inFolders = <String>{
+      for (final d in drawers)
+        if (d.type == 'custom' && d.icon == '_grid')
+          for (final i in d.items)
+            if (i.kind == 'app') i.value,
+    };
+    final groups = <String, List<AppEntry>>{for (final k in autoGroups.keys) k: []};
+    final loose = <AppEntry>[];
+    for (final a in apps) {
+      if (dockPkgs.contains(a.pkg) || inFolders.contains(a.pkg)) continue;
+      final g = core.contains(a.pkg) ? null : groupOf(a);
+      if (g == null) {
+        loose.add(a);
+      } else {
+        groups[g]!.add(a);
+      }
+    }
+
+    final order = <DrawerCfg>[];
+    for (final e in autoGroups.entries) {
+      final list = groups[e.key]!;
+      if (list.isEmpty) continue;
+      order.add(DrawerCfg('g_${e.key}', e.value.$1, e.value.$2, '_grid',
+          type: 'custom', mode: 'custom', items: [for (final a in list) Acceso('app', a.label, a.pkg, icon: 'apps', color: 1)]));
+    }
+    order.addAll(drawers.where((d) => !dock.contains(d.id)));
+    loose.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
+    order.addAll(loose.map(_appDrawer));
+    for (final d in order) {
+      if (!drawers.contains(d)) drawers.add(d);
+      d.pos = firstFree();
+    }
+    knownApps = apps.map((a) => a.pkg).toSet();
+    layoutV = 3;
+    changed();
+  }
+
+  /// Apps nuevas aparecen solas al final del escritorio; las desinstaladas desaparecen.
+  void _syncApps() {
+    if (apps.length < 5) return;
+    final have = apps.map((a) => a.pkg).toSet();
+    var dirty = false;
+    final gone = drawers.where((d) => d.type == 'app' && !have.contains(d.pkg)).toList();
+    for (final d in gone) {
+      drawers.remove(d);
+      dock.remove(d.id);
+      dirty = true;
+    }
+    for (final d in drawers) {
+      if (d.type != 'custom') continue;
+      final n = d.items.length;
+      d.items.removeWhere((a) => a.kind == 'app' && !have.contains(a.value));
+      if (d.items.length != n) dirty = true;
+    }
+    final fresh = apps.where((a) => !knownApps.contains(a.pkg)).toList();
+    for (final a in fresh) {
+      final placed = drawers.any((d) => (d.type == 'app' && d.pkg == a.pkg) || d.items.any((i) => i.kind == 'app' && i.value == a.pkg));
+      if (placed) continue;
+      final d = _appDrawer(a);
+      drawers.add(d);
+      d.pos = firstFree();
+    }
+    if (fresh.isNotEmpty) {
+      knownApps.addAll(fresh.map((a) => a.pkg));
+      dirty = true;
+    }
+    if (dirty) changed();
+  }
+
+  /// Suelta un icono encima de otro:
+  /// app sobre app → nuevo cajón con las dos; app sobre cajón propio → se añade; si no, se intercambian.
+  /// Devuelve 'new', 'added' o null.
+  String? dropOn(String fromId, String toId) {
+    if (fromId == toId) return null;
+    final fi = drawers.indexWhere((d) => d.id == fromId);
+    final ti = drawers.indexWhere((d) => d.id == toId);
+    if (fi < 0 || ti < 0) return null;
+    final from = drawers[fi], to = drawers[ti];
+    Acceso acc(DrawerCfg d) => Acceso('app', d.name, d.pkg, icon: 'apps', color: d.color);
+    if (from.type == 'app' && to.type == 'app') {
+      AppEntry? entry(String pkg) {
+        for (final a in apps) {
+          if (a.pkg == pkg) return a;
+        }
+        return null;
+      }
+
+      final ea = entry(from.pkg), eb = entry(to.pkg);
+      final ga = ea == null ? null : groupOf(ea), gb = eb == null ? null : groupOf(eb);
+      final name = (ga != null && ga == gb) ? autoGroups[ga]!.$1 : 'Cajón';
+      final folder = DrawerCfg(newId(), name, 6, '_grid', type: 'custom', mode: 'custom', items: [acc(to), acc(from)]);
+      final di = dock.indexOf(to.id);
+      if (di >= 0) {
+        dock[di] = folder.id;
+      } else {
+        folder.pos = to.pos;
+      }
+      drawers[ti] = folder;
+      drawers.remove(from);
+      dock.remove(from.id);
+      changed();
+      return 'new';
+    }
+    if (from.type == 'app' && to.type == 'custom') {
+      if (!to.items.any((a) => a.kind == 'app' && a.value == from.pkg)) to.items.add(acc(from));
+      to.mode = 'custom';
+      drawers.remove(from);
+      dock.remove(from.id);
+      changed();
+      return 'added';
+    }
+    final tDock = dock.indexOf(to.id), fDock = dock.indexOf(from.id);
+    if (tDock >= 0) {
+      if (fDock >= 0) {
+        dock[tDock] = from.id;
+        dock[fDock] = to.id;
+      } else {
+        dock[tDock] = from.id;
+        to.pos = from.pos;
+        from.pos = -1;
+      }
+      changed();
+    } else if (to.pos >= 0) {
+      moveToSlot(from.id, to.pos);
+    }
+    return null;
   }
 
   /// Apps ordenadas: primero las usadas más recientemente, luego el resto por nombre.

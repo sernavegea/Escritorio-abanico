@@ -271,14 +271,32 @@ Future<void> editDrawer(BuildContext context, DrawerCfg d, {bool isNew = false})
 void removeFromDesk(BuildContext context, DrawerCfg d) {
   final dockIndex = app.dock.indexOf(d.id);
   final pos = d.pos;
+  // Al quitar un cajón-carpeta, sus apps vuelven sueltas al escritorio.
+  final freed = <DrawerCfg>[];
+  if (d.type == 'custom' && d.icon == '_grid') {
+    for (final it in d.items.where((i) => i.kind == 'app')) {
+      if (app.drawers.any((x) => x.type == 'app' && x.pkg == it.value)) continue;
+      freed.add(DrawerCfg('a_${it.value}', it.label, 1, 'apps', type: 'app', pkg: it.value));
+    }
+  }
   app.removeDrawer(d);
+  if (freed.isNotEmpty) app.addMany(freed, fromPage: pos >= 0 ? app.pageOf(pos) : 0);
   final m = ScaffoldMessenger.maybeOf(context);
   m?.hideCurrentSnackBar();
   m?.showSnackBar(SnackBar(
-    content: Text('«${d.name}» quitado'),
+    content: Text(freed.isEmpty ? '«${d.name}» quitado' : '«${d.name}» deshecho: sus apps vuelven al escritorio'),
     behavior: SnackBarBehavior.floating,
     backgroundColor: kSheet2,
-    action: SnackBarAction(label: 'Deshacer', textColor: kGlow, onPressed: () => app.restoreDrawer(d, dockIndex, pos)),
+    action: SnackBarAction(
+      label: 'Deshacer',
+      textColor: kGlow,
+      onPressed: () {
+        for (final f in freed) {
+          app.drawers.remove(f);
+        }
+        app.restoreDrawer(d, dockIndex, pos);
+      },
+    ),
   ));
 }
 

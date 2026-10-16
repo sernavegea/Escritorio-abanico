@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' show max;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -200,7 +201,42 @@ class DrawerTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final d = app.drawer(id);
     if (d.type == 'app' && d.pkg.isNotEmpty) return AppIcon(pkg: d.pkg, size: size);
+    if (d.icon == '_grid') return FolderTile(items: d.items, size: size);
     return Tile(size: size, colors: pal(d.color), icon: iconFor(d.icon), shadow: shadow);
+  }
+}
+
+/// Cajón con aspecto de carpeta: se ven en pequeño las primeras cuatro apps de dentro.
+class FolderTile extends StatelessWidget {
+  const FolderTile({super.key, required this.items, required this.size});
+  final List<Acceso> items;
+  final double size;
+  @override
+  Widget build(BuildContext context) {
+    final s = size;
+    final pad = s * .12, gap = s * .07;
+    final c = (s - pad * 2 - gap) / 2;
+    Widget cell(int i) {
+      if (i >= items.length) return SizedBox(width: c, height: c);
+      final it = items[i];
+      if (it.kind == 'app') return AppIcon(pkg: it.value, size: c);
+      return Tile(size: c, colors: pal(it.color), icon: iconFor(it.icon), shadow: false);
+    }
+
+    return Container(
+      width: s,
+      height: s,
+      padding: EdgeInsets.all(pad),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(s * app.radius),
+        color: const Color(0x5C0C1C1E),
+        border: Border.all(color: Colors.white.withValues(alpha: .22)),
+      ),
+      child: Column(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [cell(0), cell(1)]),
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [cell(2), cell(3)]),
+      ]),
+    );
   }
 }
 
@@ -345,6 +381,12 @@ class WallPreview extends StatelessWidget {
   }
 }
 
+int _wallPx(BuildContext context) {
+  final m = MediaQuery.of(context);
+  final side = max(m.size.width, m.size.height) * m.devicePixelRatio;
+  return (side * 1.3).round().clamp(800, 4096);
+}
+
 class Wallpaper extends StatelessWidget {
   const Wallpaper({super.key});
   @override
@@ -352,7 +394,14 @@ class Wallpaper extends StatelessWidget {
     final f = app.wallpaperFile;
     if (f != null && File(f).existsSync()) {
       return Stack(fit: StackFit.expand, children: [
-        Image.file(File(f), fit: BoxFit.cover, gaplessPlayback: true),
+        Image(
+          // Se decodifica al tamaño de la pantalla (no a los megapíxeles de la foto),
+          // así cada fotograma mueve mucha menos imagen.
+          image: ResizeImage(FileImage(File(f)), width: _wallPx(context), height: _wallPx(context), policy: ResizeImagePolicy.fit),
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+          filterQuality: FilterQuality.medium,
+        ),
         Container(color: Colors.black.withValues(alpha: .22)),
       ]);
     }

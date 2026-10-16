@@ -10,6 +10,7 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -22,6 +23,9 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.AlarmClock
+import android.provider.ContactsContract
+import android.provider.MediaStore
+import android.provider.Telephony
 import android.provider.Settings
 import android.service.notification.StatusBarNotification
 import android.view.Gravity
@@ -66,13 +70,43 @@ class MainActivity : FlutterActivity() {
                         val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
                         val list = pm.queryIntentActivities(query, 0)
                             .filter { it.activityInfo.packageName != packageName }
-                            .map { mapOf("label" to it.loadLabel(pm).toString(), "pkg" to it.activityInfo.packageName) }
+                            .map {
+                                val ai = it.activityInfo.applicationInfo
+                                val cat = if (Build.VERSION.SDK_INT >= 26) ai.category else -1
+                                val sys = (ai.flags and (ApplicationInfo.FLAG_SYSTEM or ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0
+                                @Suppress("DEPRECATION")
+                                val game = (ai.flags and ApplicationInfo.FLAG_IS_GAME) != 0
+                                mapOf<String, Any>(
+                                    "label" to it.loadLabel(pm).toString(),
+                                    "pkg" to it.activityInfo.packageName,
+                                    "cat" to cat,
+                                    "sys" to sys,
+                                    "game" to game,
+                                )
+                            }
                             .distinctBy { it["pkg"] }
-                            .sortedBy { (it["label"] ?: "").lowercase() }
+                            .sortedBy { (it["label"] as String).lowercase() }
                         ui.post { result.success(list) }
                     } catch (e: Exception) {
                         ui.post { result.error("apps", e.message, null) }
                     }
+                }
+                "roles" -> worker.execute {
+                    val pm = packageManager
+                    fun res(i: Intent): String? = try {
+                        val p = pm.resolveActivity(i, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+                        if (p == null || p == "android" || pm.getLaunchIntentForPackage(p) == null) null else p
+                    } catch (e: Exception) { null }
+                    val m = HashMap<String, String?>()
+                    m["phone"] = res(Intent(Intent.ACTION_DIAL))
+                    m["camera"] = res(Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA))
+                    m["settings"] = res(Intent(Settings.ACTION_SETTINGS))
+                    m["browser"] = res(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com")))
+                    m["gallery"] = res(Intent(Intent.ACTION_VIEW).setType("image/*"))
+                    m["contacts"] = res(Intent(Intent.ACTION_VIEW, ContactsContract.Contacts.CONTENT_URI))
+                    m["email"] = res(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:")))
+                    m["sms"] = try { Telephony.Sms.getDefaultSmsPackage(this@MainActivity) } catch (e: Exception) { null }
+                    ui.post { result.success(m) }
                 }
                 "icon" -> {
                     val pkg = call.argument<String>("pkg") ?: ""

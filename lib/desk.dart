@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'editor.dart';
 import 'fan.dart';
+import 'native.dart';
 import 'notifs.dart';
 import 'pages.dart';
 import 'state.dart';
@@ -23,7 +24,40 @@ class DeskArea extends StatefulWidget {
 
 class DeskAreaState extends State<DeskArea> {
   final pc = PageController();
-  int page = 0;
+  final ValueNotifier<int> pageN = ValueNotifier(0);
+  int get page => pageN.value;
+  bool _warmed = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_warmed) {
+      _warmed = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _warmIcons());
+    }
+  }
+
+  /// Carga y decodifica de antemano los iconos de todas las páginas,
+  /// para que al pasar de página no haya que esperar a ninguno.
+  Future<void> _warmIcons() async {
+    final pkgs = <String>{
+      for (final d in [...app.deskItems, ...app.dockItems])
+        if (d.type == 'app' && d.pkg.isNotEmpty) d.pkg,
+    };
+    for (final pkg in pkgs) {
+      if (!mounted) return;
+      var b = app.iconCache[pkg];
+      if (b == null && !app.iconCache.containsKey(pkg)) {
+        b = await Native.icon(pkg);
+        app.iconCache[pkg] = b;
+      }
+      if (b != null && mounted) {
+        try {
+          await precacheImage(MemoryImage(b), context);
+        } catch (_) {}
+      }
+    }
+  }
   Timer? _flip;
   bool dragging = false;
 
@@ -31,6 +65,7 @@ class DeskAreaState extends State<DeskArea> {
   void dispose() {
     _flip?.cancel();
     pc.dispose();
+    pageN.dispose();
     super.dispose();
   }
 
@@ -73,7 +108,11 @@ class DeskAreaState extends State<DeskArea> {
   Widget build(BuildContext context) {
     final editing = widget.editing;
     final pages = app.pageCount + (editing ? 1 : 0);
-    if (page >= pages) page = pages - 1;
+    if (page >= pages) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && page >= pages) pageN.value = max(0, pages - 1);
+      });
+    }
     final side = app.dockSide;
     final grid = Column(children: [
       if (!editing && isAndroid) const Padding(padding: EdgeInsets.only(top: 4), child: NotifBubbles()),
@@ -82,14 +121,22 @@ class DeskAreaState extends State<DeskArea> {
           PageView.builder(
             controller: pc,
             itemCount: pages,
-            onPageChanged: (p) => setState(() => page = p),
-            itemBuilder: (_, p) => _DeskPage(page: p, editing: editing, onEditRequest: widget.onEditRequest, onDrag: _setDragging),
+            // Prepara la página de al lado antes de llegar a ella.
+            allowImplicitScrolling: true,
+            onPageChanged: (p) => pageN.value = p,
+            itemBuilder: (_, p) => _KeepPage(
+              child: RepaintBoundary(
+                child: _DeskPage(page: p, editing: editing, dragging: dragging, onEditRequest: widget.onEditRequest, onDrag: _setDragging),
+              ),
+            ),
           ),
-          if (editing && dragging) ...[_edge(false, pages), _edge(true, pages)],
+          if (dragging) ...[_edge(false, pages), _edge(true, pages)],
         ]),
       ),
       if (pages > 1)
-        Padding(
+        ValueListenableBuilder<int>(
+          valueListenable: pageN,
+          builder: (_, page, __) => Padding(
           padding: const EdgeInsets.only(bottom: 6, top: 2),
           child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
             for (var i = 0; i < pages; i++)
@@ -108,10 +155,11 @@ class DeskAreaState extends State<DeskArea> {
               ),
           ]),
         ),
+        ),
     ]);
     final dock = side == 'none' && !editing
         ? null
-        : _Dock(vertical: side != 'bottom', editing: editing, page: page, onEditRequest: widget.onEditRequest, onDrag: _setDragging);
+        : _Dock(vertical: side != 'bottom', editing: editing, dragging: dragging, page: page, onEditRequest: widget.onEditRequest, onDrag: _setDragging);
     if (dock == null) return grid;
     if (side == 'bottom') {
       return Column(children: [Expanded(child: grid), dock]);
@@ -124,13 +172,88 @@ class DeskAreaState extends State<DeskArea> {
   }
 }
 
+/// Suelta un icono encima de otro: crea un cajón, lo añade a un cajón o los intercambia.
+void dropOnIcon(BuildContext context, String from, String to, ValueChanged<bool> onDrag) {
+  HapticFeedback.selectionClick();
+  onDrag(false);
+  final r = app.dropOn(from, to);
+  if (r == 'new') {
+    toast(context, 'Cajón creado. Suelta más apps encima para añadirlas');
+  } else if (r == 'added') {
+    toast(context, 'Añadida a «${app.drawer(to).name}»');
+  }
+}
+
+/// Icono fuera del modo edición: se toca para abrir, las apps se arrastran con pulsación larga
+/// y se puede soltar otra app encima para juntarlas en un cajón.
+class _LiveIcon extends StatelessWidget {
+  const _LiveIcon({required this.id, required this.size, required this.width, required this.onEditRequest, required this.onDrag, this.label = true});
+  final String id;
+  final double size;
+  final double width;
+  final bool label;
+  final VoidCallback onEditRequest;
+  final ValueChanged<bool> onDrag;
+
+  @override
+  Widget build(BuildContext context) {
+    final d = app.drawer(id);
+    Widget icon = DeskIcon(id: id, size: size, width: width, label: label, onEditRequest: onEditRequest);
+    if (d.type == 'app') {
+      final face = SizedBox(width: width, child: IconFace(id: id, size: size, label: label));
+      icon = LongPressDraggable<String>(
+        data: id,
+        delay: const Duration(milliseconds: 280),
+        hapticFeedbackOnStart: true,
+        onDragStarted: () {
+          fan.close();
+          onDrag(true);
+        },
+        onDragEnd: (_) => onDrag(false),
+        feedback: Material(type: MaterialType.transparency, child: Transform.scale(scale: 1.12, child: face)),
+        childWhenDragging: Opacity(opacity: .25, child: face),
+        child: icon,
+      );
+    }
+    final canTake = d.type == 'app' || d.type == 'custom';
+    return DragTarget<String>(
+      onWillAcceptWithDetails: (det) => det.data != id,
+      onAcceptWithDetails: (det) => dropOnIcon(context, det.data, id, onDrag),
+      builder: (context, cand, _) => AnimatedScale(
+        scale: cand.isNotEmpty ? (canTake ? 1.18 : 1.08) : 1,
+        duration: const Duration(milliseconds: 120),
+        child: icon,
+      ),
+    );
+  }
+}
+
+/// Mantiene viva una página ya construida para no rehacerla al volver a ella.
+class _KeepPage extends StatefulWidget {
+  const _KeepPage({required this.child});
+  final Widget child;
+  @override
+  State<_KeepPage> createState() => _KeepPageState();
+}
+
+class _KeepPageState extends State<_KeepPage> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return widget.child;
+  }
+}
+
 // ======================================================================
 // Una página de la cuadrícula
 // ======================================================================
 class _DeskPage extends StatelessWidget {
-  const _DeskPage({required this.page, required this.editing, required this.onEditRequest, required this.onDrag});
+  const _DeskPage({required this.page, required this.editing, required this.dragging, required this.onEditRequest, required this.onDrag});
   final int page;
   final bool editing;
+  final bool dragging;
   final VoidCallback onEditRequest;
   final ValueChanged<bool> onDrag;
 
@@ -150,8 +273,8 @@ class _DeskPage extends StatelessWidget {
         ));
       }
 
-      // Casillas vacías (en edición, para soltar iconos).
-      if (editing) {
+      // Casillas vacías (en edición o mientras se arrastra, para soltar iconos).
+      if (editing || dragging) {
         for (var k = 0; k < app.perPage; k++) {
           final slot = base + k;
           if (app.blocked(slot) || app.itemAt(slot) != null) continue;
@@ -209,9 +332,9 @@ class _DeskPage extends StatelessWidget {
                     size: iconS,
                     width: cw,
                     onDrag: onDrag,
-                    onDrop: (from) => app.moveToSlot(from, d.pos),
+                    onDrop: (from) => dropOnIcon(context, from, d.id, onDrag),
                   )
-                : DeskIcon(id: d.id, size: iconS, width: cw, onEditRequest: onEditRequest),
+                : _LiveIcon(id: d.id, size: iconS, width: cw, onEditRequest: onEditRequest, onDrag: onDrag),
           ),
         ));
       }
@@ -240,9 +363,10 @@ class _DeskPage extends StatelessWidget {
 // Barra lateral (o inferior) con los iconos importantes
 // ======================================================================
 class _Dock extends StatelessWidget {
-  const _Dock({required this.vertical, required this.editing, required this.page, required this.onEditRequest, required this.onDrag});
+  const _Dock({required this.vertical, required this.editing, required this.dragging, required this.page, required this.onEditRequest, required this.onDrag});
   final bool vertical;
   final bool editing;
+  final bool dragging;
   final int page;
   final VoidCallback onEditRequest;
   final ValueChanged<bool> onDrag;
@@ -281,12 +405,12 @@ class _Dock extends StatelessWidget {
                       width: slot,
                       label: false,
                       onDrag: onDrag,
-                      onDrop: (from) => app.moveToDock(from, i),
+                      onDrop: (from) => dropOnIcon(context, from, items[i].id, onDrag),
                     ))
-                : DeskIcon(id: items[i].id, size: s, width: slot, label: false, onEditRequest: onEditRequest),
+                : _LiveIcon(id: items[i].id, size: s, width: slot, label: false, onEditRequest: onEditRequest, onDrag: onDrag),
           ),
         ),
-      if (editing)
+      if (editing || dragging)
         wrapTarget(
           items.length,
           SizedBox(
@@ -294,7 +418,7 @@ class _Dock extends StatelessWidget {
             height: slot,
             child: Center(
               child: GestureDetector(
-                onTap: () => addToDesk(context, toDock: true),
+                onTap: editing ? () => addToDesk(context, toDock: true) : null,
                 child: Container(
                   width: s,
                   height: s,
@@ -302,7 +426,7 @@ class _Dock extends StatelessWidget {
                     borderRadius: BorderRadius.circular(s * app.radius),
                     border: Border.all(color: kInk.withValues(alpha: .5), width: 1.5),
                   ),
-                  child: const Icon(Icons.add, color: kInk),
+                  child: Icon(editing ? Icons.add : Icons.south, color: kInk),
                 ),
               ),
             ),
@@ -346,7 +470,7 @@ class IconFace extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, shadows: [Shadow(blurRadius: 6, color: Colors.black)])),
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, shadows: [Shadow(blurRadius: 3, color: Colors.black)])),
       ],
     ]);
   }
@@ -400,19 +524,10 @@ class _DeskIconState extends State<DeskIcon> {
         fan.close();
         openDrawer(context, widget.id);
       },
-      onLongPressStart: (_) {
-        if (isApp) {
-          widget.onEditRequest();
-          return;
-        }
-        _showFan();
-      },
-      onLongPressMoveUpdate: (e) {
-        if (!isApp) fan.hover(e.globalPosition);
-      },
-      onLongPressEnd: (_) {
-        if (!isApp) fan.release();
-      },
+      // Las apps se arrastran con una pulsación larga; los cajones abren su abanico.
+      onLongPressStart: isApp ? null : (_) => _showFan(),
+      onLongPressMoveUpdate: isApp ? null : (e) => fan.hover(e.globalPosition),
+      onLongPressEnd: isApp ? null : (_) => fan.release(),
       child: SizedBox(width: widget.width, child: IconFace(id: widget.id, size: widget.size, tileKey: key, label: widget.label)),
     );
     if (isApp) return gesture;

@@ -67,6 +67,27 @@ class SettingsPage extends StatelessWidget {
             },
           ),
           const _H('Escritorio'),
+          if (isAndroid)
+            ListTile(
+              leading: const Icon(Icons.auto_awesome_mosaic_outlined),
+              title: const Text('Organizar el escritorio automáticamente'),
+              subtitle: const Text('Barra con WhatsApp, cámara, teléfono, fotos, archivos y ajustes; cajones Google, Entretenimiento, Bancos, Utilidades y Juegos; el resto de apps sueltas',
+                  style: TextStyle(color: kDim)),
+              onTap: () async {
+                final ok = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text('¿Organizar el escritorio?'),
+                    content: const Text('Se recolocan todos los iconos. Tus cajones propios y los widgets se mantienen.'),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+                      FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Organizar')),
+                    ],
+                  ),
+                );
+                if (ok == true) await app.buildDefaultLayout();
+              },
+            ),
           ListTile(
             leading: const Icon(Icons.grid_on),
             title: const Text('Cuadrícula de iconos'),

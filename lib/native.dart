@@ -16,10 +16,30 @@ class Native {
       final r = await ch.invokeMethod<List<dynamic>>('apps') ?? const [];
       return r.map((e) {
         final m = Map<String, dynamic>.from(e as Map);
-        return AppEntry((m['label'] ?? '') as String, (m['pkg'] ?? '') as String);
+        return AppEntry(
+          (m['label'] ?? '') as String,
+          (m['pkg'] ?? '') as String,
+          cat: ((m['cat'] ?? -1) as num).toInt(),
+          sys: (m['sys'] ?? false) == true,
+          game: (m['game'] ?? false) == true,
+        );
       }).toList();
     } catch (_) {
       return [];
+    }
+  }
+
+  /// Apps predeterminadas del sistema: teléfono, cámara, ajustes, navegador, galería…
+  static Future<Map<String, String>> roles() async {
+    if (!Platform.isAndroid) return {};
+    try {
+      final r = await ch.invokeMethod<Map<dynamic, dynamic>>('roles') ?? const {};
+      return {
+        for (final e in r.entries)
+          if (e.value is String && (e.value as String).isNotEmpty) e.key as String: e.value as String,
+      };
+    } catch (_) {
+      return {};
     }
   }
 

@@ -137,7 +137,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         body: ListenableBuilder(
           listenable: app,
           builder: (context, _) => Stack(children: [
-            Positioned.fill(child: Wallpaper()),
+            Positioned.fill(child: RepaintBoundary(child: Wallpaper())),
             SafeArea(
               child: Column(children: [
                 Padding(
