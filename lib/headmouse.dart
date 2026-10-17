@@ -53,6 +53,19 @@ class HeadMouse extends ChangeNotifier with WidgetsBindingObserver {
   bool face = false;
   int frontCams = 0;
   bool calibrating = false;
+
+  // Diagnóstico (se ve en los ajustes del control con la cabeza).
+  final ValueNotifier<String> diag = ValueNotifier('');
+  int _frames = 0, _faceFrames = 0, _noFace = 0, _rotFix = 0;
+  String? _lastError;
+  String _imgInfo = '';
+  CameraController? get camera => _cam;
+
+  void _updateDiag() {
+    diag.value = 'Fotogramas: $_frames · con cara: $_faceFrames\n'
+        'Imagen: $_imgInfo · corrección de giro: $_rotFix°'
+        '${_lastError != null ? '\nError: $_lastError' : ''}';
+  }
   final ValueNotifier<Offset> cursor = ValueNotifier(Offset.zero);
   final ValueNotifier<double> dwellProgress = ValueNotifier(0);
   final ValueNotifier<bool> pressing = ValueNotifier(false);
@@ -276,8 +289,10 @@ class HeadMouse extends ChangeNotifier with WidgetsBindingObserver {
     comp = desc.lensDirection == CameraLensDirection.front
         ? (desc.sensorOrientation + comp) % 360
         : (desc.sensorOrientation - comp + 360) % 360;
+    comp = (comp + _rotFix) % 360;
     final rotation = InputImageRotationValue.fromRawValue(comp) ?? InputImageRotation.rotation0deg;
     final size = Size(img.width.toDouble(), img.height.toDouble());
+    _imgInfo = '${img.width}×${img.height}, ${img.planes.length} plano(s), giro $comp°';
     if (img.planes.length == 1) {
       final p = img.planes.first;
       return InputImage.fromBytes(
@@ -320,22 +335,42 @@ class HeadMouse extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _process(CameraImage img) async {
     final det = _detector;
     if (det == null || _cam == null) return;
-    final input = _toInput(img);
-    if (input == null) return;
+    _frames++;
+    InputImage? input;
+    try {
+      input = _toInput(img);
+    } catch (e) {
+      _lastError = 'imagen: $e';
+    }
+    if (input == null) {
+      if (_frames % 10 == 0) _updateDiag();
+      return;
+    }
     List<Face> faces;
     try {
       faces = await det.processImage(input);
-    } catch (_) {
+    } catch (e) {
+      _lastError = 'detector: $e';
+      if (_frames % 10 == 0) _updateDiag();
       return;
     }
+    if (_frames % 10 == 0) _updateDiag();
     if (_cam == null) return;
     if (faces.isEmpty) {
+      // Si en un buen rato no aparece ninguna cara, prueba otro giro de la imagen
+      // (algunos móviles, sobre todo plegables, informan mal la orientación de la cámara).
+      if (++_noFace >= 25 && _faceFrames == 0) {
+        _noFace = 0;
+        _rotFix = (_rotFix + 90) % 360;
+      }
       if (face) {
         face = false;
         notifyListeners();
       }
       return;
     }
+    _noFace = 0;
+    _faceFrames++;
     final big = faces.reduce((a, b) => a.boundingBox.width * a.boundingBox.height >= b.boundingBox.width * b.boundingBox.height ? a : b);
     if (!face) {
       face = true;
@@ -828,6 +863,24 @@ class HeadSettingsPage extends StatelessWidget {
             enabled: head.enabled,
             onTap: head.recenter,
           ),
+          if (head.enabled)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                if (head.camera != null && head.camera!.value.isInitialized)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: SizedBox(width: 96, height: 128, child: CameraPreview(head.camera!)),
+                  ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ValueListenableBuilder<String>(
+                    valueListenable: head.diag,
+                    builder: (_, t, __) => Text(t.isEmpty ? 'Esperando a la cámara…' : t, style: const TextStyle(color: kDim, fontSize: 12)),
+                  ),
+                ),
+              ]),
+            ),
           if (head.frontCams > 1)
             ListTile(
               leading: const Icon(Icons.cameraswitch_outlined),

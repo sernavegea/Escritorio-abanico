@@ -292,6 +292,7 @@ class AppState extends ChangeNotifier {
       } catch (_) {}
     }
     _migrate();
+    if (_compactPages()) save();
     notifyListeners();
     refreshAll();
   }
@@ -666,8 +667,44 @@ class AppState extends ChangeNotifier {
   void save() => _prefs?.setString('cfg', jsonEncode(_toJson()));
 
   void changed() {
+    _compactPages();
     save();
     notifyListeners();
+  }
+
+  /// Mientras se arrastra un icono no se quitan páginas (para no mover el escritorio bajo el dedo).
+  bool holdCompact = false;
+
+  /// Quita las páginas que se han quedado sin iconos ni widgets entre otras que sí tienen.
+  bool _compactPages() {
+    if (holdCompact) return false;
+    var moved = false;
+    var p = 0;
+    while (p < pageCount) {
+      final used = deskItems.any((d) => pageOf(d.pos) == p) || widgets.any((w) => w.page == p);
+      if (!used) {
+        final later = deskItems.any((d) => pageOf(d.pos) > p) || widgets.any((w) => w.page > p);
+        if (!later) break;
+        for (final d in deskItems) {
+          if (pageOf(d.pos) > p) d.pos -= perPage;
+        }
+        for (final w in widgets) {
+          if (w.page > p) w.page--;
+        }
+        moved = true;
+        continue;
+      }
+      p++;
+    }
+    return moved;
+  }
+
+  /// Al terminar de arrastrar: recoge las páginas vacías que hayan quedado.
+  void compactNow() {
+    if (_compactPages()) {
+      save();
+      notifyListeners();
+    }
   }
 
   Future<void> resetLook() async {

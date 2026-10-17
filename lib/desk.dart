@@ -168,7 +168,9 @@ class DeskAreaState extends State<DeskArea> {
   }
 
   void _setDragging(bool v) {
+    app.holdCompact = v;
     if (dragging != v) setState(() => dragging = v);
+    if (!v) app.compactNow();
   }
 }
 
