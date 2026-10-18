@@ -58,6 +58,9 @@ class HeadMouse extends ChangeNotifier with WidgetsBindingObserver {
   final ValueNotifier<String> diag = ValueNotifier('');
   int _frames = 0, _faceFrames = 0, _noFace = 0, _rotFix = 0;
   String? _lastError;
+  bool _yuv = false; // formato de imagen alternativo si NV21 no da imagen
+  int _attempts = 0;
+  Timer? _watch;
   String _imgInfo = '';
   CameraController? get camera => _cam;
 
@@ -117,7 +120,14 @@ class HeadMouse extends ChangeNotifier with WidgetsBindingObserver {
     if (!supported) return;
     WidgetsBinding.instance.addObserver(this);
     final p = _prefs = await SharedPreferences.getInstance();
-    enabled = p.getBool('head.enabled') ?? false;
+    enabled = p.getBool('head.on') ?? false;
+    // Si la última vez Abanico se cerró de golpe mientras arrancaba la cámara, no se vuelve a encender solo.
+    if (enabled && (p.getBool('head.booting') ?? false)) {
+      enabled = false;
+      p.setBool('head.on', false);
+      p.setBool('head.booting', false);
+      message = 'El control con la cabeza se apagó porque Abanico se cerró mientras usaba la cámara.';
+    }
     sens = p.getDouble('head.sens') ?? sens;
     gestureSens = p.getDouble('head.gsens') ?? gestureSens;
     dwell = p.getBool('head.dwell') ?? false;
@@ -137,7 +147,7 @@ class HeadMouse extends ChangeNotifier with WidgetsBindingObserver {
   void _save() {
     final p = _prefs;
     if (p == null) return;
-    p.setBool('head.enabled', enabled);
+    p.setBool('head.on', enabled);
     p.setDouble('head.sens', sens);
     p.setDouble('head.gsens', gestureSens);
     p.setBool('head.dwell', dwell);
@@ -210,7 +220,8 @@ class HeadMouse extends ChangeNotifier with WidgetsBindingObserver {
       frontCams = fronts.length;
       if (cams.isEmpty) throw CameraException('NoCamera', 'No hay cámara');
       final desc = fronts.isEmpty ? cams.first : fronts[camIndex % fronts.length];
-      final cam = CameraController(desc, ResolutionPreset.medium, enableAudio: false, imageFormatGroup: ImageFormatGroup.nv21);
+      final cam = CameraController(desc, ResolutionPreset.medium,
+          enableAudio: false, imageFormatGroup: _yuv ? ImageFormatGroup.yuv420 : ImageFormatGroup.nv21);
       await cam.initialize();
       _detector ??= FaceDetector(
         options: FaceDetectorOptions(
@@ -228,6 +239,14 @@ class HeadMouse extends ChangeNotifier with WidgetsBindingObserver {
       _desc = desc;
       await cam.startImageStream(_onFrame);
       status = HeadStatus.running;
+      // Marca de arranque: si la app muere en los próximos segundos, al volver no se reactiva sola.
+      _prefs?.setBool('head.booting', true);
+      Timer(const Duration(seconds: 8), () {
+        if (_cam == cam) _prefs?.setBool('head.booting', false);
+      });
+      _imgInfo = 'cámara ${desc.name} (${_yuv ? 'YUV' : 'NV21'})';
+      _updateDiag();
+      _watchFrames(cam);
       if (!calibrating && _calib.isEmpty && _yaw0 == 0 && _pitch0 == 0) recenter();
       _addMouse();
     } on CameraException catch (e) {
@@ -247,7 +266,41 @@ class HeadMouse extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// Si la cámara no entrega imágenes en unos segundos, prueba otro formato y luego la otra cámara frontal.
+  void _watchFrames(CameraController cam) {
+    _watch?.cancel();
+    final start = _frames;
+    _watch = Timer(const Duration(seconds: 4), () async {
+      if (!enabled || _cam != cam || _frames > start) {
+        if (_frames > start) _attempts = 0;
+        return;
+      }
+      _attempts++;
+      final maxAttempts = 2 * max(1, frontCams) + 1;
+      if (_attempts > maxAttempts) {
+        await _stop(keepStatus: true);
+        status = HeadStatus.error;
+        message = 'La cámara frontal no da imagen. Cierra otras apps que usen la cámara y vuelve a activar el control.';
+        _attempts = 0;
+        notifyListeners();
+        return;
+      }
+      if (!_yuv) {
+        _yuv = true;
+      } else {
+        _yuv = false;
+        if (frontCams > 1) camIndex = (camIndex + 1) % frontCams;
+      }
+      _lastError = 'la cámara no daba imagen; probando otra configuración ($_attempts)';
+      _updateDiag();
+      await _stop(keepStatus: true);
+      await _start();
+    });
+  }
+
   Future<void> _stop({bool keepStatus = false}) async {
+    _watch?.cancel();
+    _prefs?.setBool('head.booting', false);
     final cam = _cam;
     _cam = null;
     face = false;
@@ -867,12 +920,6 @@ class HeadSettingsPage extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 4, 18, 8),
               child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                if (head.camera != null && head.camera!.value.isInitialized)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: SizedBox(width: 96, height: 128, child: CameraPreview(head.camera!)),
-                  ),
-                const SizedBox(width: 12),
                 Expanded(
                   child: ValueListenableBuilder<String>(
                     valueListenable: head.diag,
