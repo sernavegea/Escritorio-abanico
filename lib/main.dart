@@ -36,8 +36,13 @@ Future<void> main() async {
     }
     return null;
   });
-  await app.init();
-  await head.init(navKey);
+  // Pase lo que pase al cargar la configuración, el escritorio tiene que aparecer (nunca pantalla negra).
+  try {
+    await app.init().timeout(const Duration(seconds: 6));
+  } catch (_) {}
+  try {
+    await head.init(navKey).timeout(const Duration(seconds: 3));
+  } catch (_) {}
   runApp(const AbanicoApp());
 }
 

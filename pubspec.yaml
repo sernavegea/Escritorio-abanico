@@ -19,3 +19,8 @@ dependencies:
 
 flutter:
   uses-material-design: true
+
+# La versión 2.5.0 de shared_preferences_android (nueva implementación JNI) deja la app en negro
+# al arrancar en la versión de publicación. Se fija la última 2.4.x, que funcionaba.
+dependency_overrides:
+  shared_preferences_android: '>=2.4.20 <2.5.0'
