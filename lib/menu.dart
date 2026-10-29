@@ -167,7 +167,7 @@ class _IconMenuState extends State<_IconMenu> with SingleTickerProviderStateMixi
     final rows = (widget.actions.length / 4).ceil();
     final estH = 46 + rows * 66 + shortcuts.length * 46.0;
     final below = a.bottom + 8 + estH < size.height - 16 || a.top - estH < 40;
-    final left = (a.center.dx - w / 2).clamp(12.0, max(12.0, size.width - w - 12));
+    final double left = (a.center.dx - w / 2).clamp(12.0, max(12.0, size.width - w - 12)).toDouble();
     return Material(
       type: MaterialType.transparency,
       child: Stack(children: [

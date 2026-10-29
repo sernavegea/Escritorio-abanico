@@ -144,7 +144,7 @@ class _AppSearchPageState extends State<AppSearchPage> {
                       : list.isEmpty
                           ? const Center(child: Text('Ninguna app coincide', style: TextStyle(color: kDim)))
                           : LayoutBuilder(builder: (context, box) {
-                              final cols = (box.maxWidth / 92).floor().clamp(4, 10);
+                              final cols = (box.maxWidth / 92).floor().clamp(4, 10).toInt();
                               return GridView.builder(
                                 keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                                 padding: const EdgeInsets.fromLTRB(10, 6, 10, 24),

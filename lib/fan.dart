@@ -103,12 +103,7 @@ class FanController {
           close();
           onCore();
         },
-        onOptions: onOptions == null
-            ? null
-            : () {
-                close();
-                onOptions();
-              },
+        onOptions: _wrapOptions(onOptions),
         onPick: (i) {
           final it = _items[i];
           close();
@@ -118,6 +113,14 @@ class FanController {
     );
     Overlay.of(context).insert(_entry!);
     if (!hover) HapticFeedback.mediumImpact();
+  }
+
+  VoidCallback? _wrapOptions(VoidCallback? f) {
+    if (f == null) return null;
+    return () {
+      close();
+      f();
+    };
   }
 
   /// Mientras el dedo sigue pulsado, ilumina el elemento visible más cercano.
