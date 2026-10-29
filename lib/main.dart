@@ -5,8 +5,9 @@ import 'package:flutter/services.dart';
 
 import 'desk.dart';
 import 'editor.dart';
-import 'fan.dart';
 import 'headmouse.dart';
+import 'menu.dart';
+import 'search.dart';
 import 'native.dart';
 import 'pages.dart';
 import 'settings.dart';
@@ -31,7 +32,7 @@ Future<void> main() async {
       return null;
     }
     if (call.method == 'home') {
-      fan.close();
+      closeMenus();
       navKey.currentState?.popUntil((r) => r.isFirst);
     }
     return null;
@@ -111,18 +112,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       setState(() => now = DateTime.now());
       app.loadNotifs();
-      if (DateTime.now().difference(lastRefresh).inSeconds > 20) {
+      if (app.forceRefresh || DateTime.now().difference(lastRefresh).inSeconds > 20) {
+        app.forceRefresh = false;
         lastRefresh = DateTime.now();
         app.refreshAll();
       }
     } else if (state == AppLifecycleState.paused) {
-      fan.close();
+      closeMenus();
       if (editing) setState(() => editing = false);
     }
   }
 
   void _startEditing() {
-    fan.close();
+    closeMenus();
     HapticFeedback.mediumImpact();
     setState(() => editing = true);
   }
@@ -135,7 +137,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && editing) setState(() => editing = false);
+        if (didPop) return;
+        if (iconMenu.isOpen) {
+          iconMenu.close();
+        } else if (editing) {
+          setState(() => editing = false);
+        }
       },
       child: Scaffold(
         backgroundColor: Colors.black,
@@ -182,6 +189,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       FilledButton(onPressed: () => setState(() => editing = false), child: const Text('Hecho')),
                     ] else ...[
                       IconButton(
+                        tooltip: 'Buscar apps',
+                        style: IconButton.styleFrom(backgroundColor: const Color(0x660C1C1E)),
+                        icon: const Icon(Icons.search, color: kInk),
+                        onPressed: () => openAppSearch(context),
+                      ),
+                      const SizedBox(width: 6),
+                      IconButton(
                         tooltip: 'Editar escritorio',
                         style: IconButton.styleFrom(backgroundColor: const Color(0x660C1C1E)),
                         icon: const Icon(Icons.edit_outlined, color: kInk),
@@ -197,7 +211,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ],
                   ]),
                 ),
-                Expanded(child: DeskArea(key: deskKey, editing: editing, onEditRequest: _startEditing)),
+                Expanded(
+                  // Deslizar hacia arriba en el escritorio abre el buscador de apps.
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onVerticalDragEnd: (d) {
+                      if (!editing && (d.primaryVelocity ?? 0) < -250) openAppSearch(context);
+                    },
+                    child: DeskArea(key: deskKey, editing: editing, onEditRequest: _startEditing),
+                  ),
+                ),
                 if (editing)
                   const Padding(
                     padding: EdgeInsets.only(bottom: 14, left: 16, right: 16),

@@ -11,6 +11,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -159,6 +160,53 @@ class MainActivity : FlutterActivity() {
                     } catch (e: Exception) {
                         ui.post { result.success(listOf<Map<String, String>>()) }
                     }
+                }
+                "shortcuts" -> {
+                    val pkg = call.argument<String>("pkg") ?: ""
+                    worker.execute {
+                        val out = ArrayList<Map<String, Any?>>()
+                        try {
+                            val la = getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
+                            if (Build.VERSION.SDK_INT >= 25 && la.hasShortcutHostPermission()) {
+                                val q = LauncherApps.ShortcutQuery()
+                                    .setPackage(pkg)
+                                    .setQueryFlags(
+                                        LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC or
+                                            LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST or
+                                            LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED
+                                    )
+                                val list = la.getShortcuts(q, android.os.Process.myUserHandle()) ?: emptyList()
+                                for (s in list.filter { it.isEnabled }.sortedBy { it.rank }.take(5)) {
+                                    val d = try { la.getShortcutIconDrawable(s, resources.displayMetrics.densityDpi) } catch (e: Exception) { null }
+                                    out.add(mapOf(
+                                        "id" to s.id,
+                                        "label" to (s.shortLabel?.toString() ?: s.longLabel?.toString() ?: ""),
+                                        "icon" to d?.let { toPng(it, 96) },
+                                    ))
+                                }
+                            }
+                        } catch (e: Exception) {}
+                        ui.post { result.success(out) }
+                    }
+                }
+                "startShortcut" -> {
+                    var ok = false
+                    try {
+                        val la = getSystemService(Context.LAUNCHER_APPS_SERVICE) as LauncherApps
+                        if (Build.VERSION.SDK_INT >= 25) {
+                            la.startShortcut(call.argument<String>("pkg") ?: "", call.argument<String>("id") ?: "", null, null, android.os.Process.myUserHandle())
+                            ok = true
+                        }
+                    } catch (e: Exception) {}
+                    result.success(ok)
+                }
+                "uninstall" -> {
+                    try {
+                        val intent = Intent(Intent.ACTION_DELETE, Uri.parse("package:" + (call.argument<String>("pkg") ?: "")))
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(intent)
+                        result.success(true)
+                    } catch (e: Exception) { result.success(false) }
                 }
                 "appInfo" -> {
                     try {

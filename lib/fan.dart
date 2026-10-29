@@ -77,6 +77,7 @@ class FanController {
     required Offset tileCenter,
     required List<FanEntry> items,
     required VoidCallback onCore,
+    VoidCallback? onOptions,
     bool hover = false,
   }) {
     close();
@@ -102,6 +103,12 @@ class FanController {
           close();
           onCore();
         },
+        onOptions: onOptions == null
+            ? null
+            : () {
+                close();
+                onOptions();
+              },
         onPick: (i) {
           final it = _items[i];
           close();
@@ -161,7 +168,8 @@ class FanController {
 final fan = FanController();
 
 class _FanOverlay extends StatefulWidget {
-  const _FanOverlay({required this.drawerId, required this.hover, required this.items, required this.onClose, required this.onCore, required this.onPick});
+  const _FanOverlay({required this.drawerId, required this.hover, required this.items, required this.onClose, required this.onCore, required this.onPick, this.onOptions});
+  final VoidCallback? onOptions;
   final String drawerId;
   final bool hover;
   final List<FanEntry> items;
@@ -348,6 +356,31 @@ class _FanOverlayState extends State<_FanOverlay> with TickerProviderStateMixin 
                   top: c.dy - 32,
                   child: GestureDetector(onTap: widget.onCore, child: DrawerTile(id: widget.drawerId, size: 64)),
                 ));
+                if (widget.onOptions != null) {
+                  // Botón de opciones del cajón (editar, mover a la barra, quitar…).
+                  children.add(Positioned(
+                    left: c.dx - 50,
+                    width: 100,
+                    top: c.dy + (fan.rotates || widget.items.isEmpty ? 58 : 40),
+                    child: Opacity(
+                      opacity: t,
+                      child: Center(
+                        child: GestureDetector(
+                          onTap: widget.onOptions,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(color: const Color(0xCC1B3A3D), borderRadius: BorderRadius.circular(14), border: Border.all(color: kLine)),
+                            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                              Icon(Icons.more_horiz, size: 16, color: kInk),
+                              SizedBox(width: 4),
+                              Text('Opciones', style: TextStyle(fontSize: 11, color: kInk)),
+                            ]),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ));
+                }
                 final n = widget.items.length;
                 String? info;
                 if (n == 0) {

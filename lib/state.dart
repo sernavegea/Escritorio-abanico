@@ -267,6 +267,7 @@ class AppState extends ChangeNotifier {
   String dockSide = 'left'; // left | bottom | none
   int layoutV = 0;
   Set<String> knownApps = {};
+  bool forceRefresh = false; // tras pedir desinstalar una app: al volver se relee la lista
   bool showNotifs = true;
   List<Notif> notifs = [];
   bool notifAccess = false;

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'editor.dart';
 import 'fan.dart';
+import 'menu.dart';
 import 'native.dart';
 import 'notifs.dart';
 import 'pages.dart';
@@ -188,7 +189,7 @@ void dropOnIcon(BuildContext context, String from, String to, ValueChanged<bool>
 
 /// Icono fuera del modo edición: se toca para abrir, las apps se arrastran con pulsación larga
 /// y se puede soltar otra app encima para juntarlas en un cajón.
-class _LiveIcon extends StatelessWidget {
+class _LiveIcon extends StatefulWidget {
   const _LiveIcon({required this.id, required this.size, required this.width, required this.onEditRequest, required this.onDrag, this.label = true});
   final String id;
   final double size;
@@ -196,31 +197,45 @@ class _LiveIcon extends StatelessWidget {
   final bool label;
   final VoidCallback onEditRequest;
   final ValueChanged<bool> onDrag;
+  @override
+  State<_LiveIcon> createState() => _LiveIconState();
+}
+
+class _LiveIconState extends State<_LiveIcon> {
+  Offset? _origin;
 
   @override
   Widget build(BuildContext context) {
+    final id = widget.id;
     final d = app.drawer(id);
-    Widget icon = DeskIcon(id: id, size: size, width: width, label: label, onEditRequest: onEditRequest);
+    Widget icon = DeskIcon(id: id, size: widget.size, width: widget.width, label: widget.label, onEditRequest: widget.onEditRequest);
     if (d.type == 'app') {
-      final face = SizedBox(width: width, child: IconFace(id: id, size: size, label: label));
+      final face = SizedBox(width: widget.width, child: IconFace(id: id, size: widget.size, label: widget.label));
+      // Mantener pulsado: salen las opciones. Si además se mueve el dedo, el menú se cierra y se arrastra el icono.
       icon = LongPressDraggable<String>(
         data: id,
-        delay: const Duration(milliseconds: 280),
+        delay: const Duration(milliseconds: 380),
         hapticFeedbackOnStart: true,
         onDragStarted: () {
           fan.close();
-          onDrag(true);
+          _origin = null;
+          widget.onDrag(true);
+          showIconMenu(context, id);
         },
-        onDragEnd: (_) => onDrag(false),
+        onDragUpdate: (u) {
+          _origin ??= u.globalPosition;
+          if (iconMenu.isOpen && (u.globalPosition - _origin!).distance > 18) iconMenu.close();
+        },
+        onDragEnd: (_) => widget.onDrag(false),
         feedback: Material(type: MaterialType.transparency, child: Transform.scale(scale: 1.12, child: face)),
-        childWhenDragging: Opacity(opacity: .25, child: face),
+        childWhenDragging: face,
         child: icon,
       );
     }
     final canTake = d.type == 'app' || d.type == 'custom';
     return DragTarget<String>(
       onWillAcceptWithDetails: (det) => det.data != id,
-      onAcceptWithDetails: (det) => dropOnIcon(context, det.data, id, onDrag),
+      onAcceptWithDetails: (det) => dropOnIcon(context, det.data, id, widget.onDrag),
       builder: (context, cand, _) => AnimatedScale(
         scale: cand.isNotEmpty ? (canTake ? 1.18 : 1.08) : 1,
         duration: const Duration(milliseconds: 120),
@@ -512,6 +527,7 @@ class _DeskIconState extends State<DeskIcon> {
       tileCenter: _center(),
       items: buildFanEntries(context, widget.id),
       onCore: () => openDrawer(context, widget.id),
+      onOptions: () => showIconMenu(context, widget.id, anchor: rectOf(key.currentContext ?? context)),
       hover: hover,
     );
   }
@@ -527,6 +543,11 @@ class _DeskIconState extends State<DeskIcon> {
         openDrawer(context, widget.id);
       },
       // Las apps se arrastran con una pulsación larga; los cajones abren su abanico.
+      onSecondaryTap: () {
+        _hover?.cancel();
+        fan.close();
+        showIconMenu(context, widget.id, anchor: rectOf(key.currentContext ?? context));
+      },
       onLongPressStart: isApp ? null : (_) => _showFan(),
       onLongPressMoveUpdate: isApp ? null : (e) => fan.hover(e.globalPosition),
       onLongPressEnd: isApp ? null : (_) => fan.release(),

@@ -198,6 +198,36 @@ class Native {
     }
   }
 
+  /// Accesos rápidos de una app (los que salen al mantener pulsado su icono). Solo con Abanico como inicio.
+  static Future<List<AppShortcut>> shortcuts(String pkg) async {
+    if (!Platform.isAndroid) return [];
+    try {
+      final r = await ch.invokeMethod<List<dynamic>>('shortcuts', {'pkg': pkg}) ?? const [];
+      return r.map((e) {
+        final m = Map<String, dynamic>.from(e as Map);
+        return AppShortcut(pkg, (m['id'] ?? '') as String, (m['label'] ?? '') as String, m['icon'] as Uint8List?);
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<bool> startShortcut(String pkg, String id) async {
+    if (!Platform.isAndroid) return false;
+    try {
+      return await ch.invokeMethod<bool>('startShortcut', {'pkg': pkg, 'id': id}) ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> uninstall(String pkg) async {
+    if (!Platform.isAndroid) return;
+    try {
+      await ch.invokeMethod('uninstall', {'pkg': pkg});
+    } catch (_) {}
+  }
+
   static Future<void> appInfo(String pkg) async {
     if (!Platform.isAndroid) return;
     try {
@@ -237,4 +267,12 @@ class WidgetProvider {
   final String cls;
   final double minW;
   final double minH;
+}
+
+class AppShortcut {
+  const AppShortcut(this.pkg, this.id, this.label, this.icon);
+  final String pkg;
+  final String id;
+  final String label;
+  final Uint8List? icon;
 }
